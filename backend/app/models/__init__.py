@@ -1,6 +1,14 @@
 from app.models.auth import MagicLinkToken, User
 from app.models.base import Base, IDMixin, TimestampMixin
 from app.models.content import Course, Exercise, ExerciseType, Lesson, Section
+from app.models.progress import (
+    DailyActivity,
+    ExerciseAttempt,
+    LessonAttempt,
+    LessonProgressStatus,
+    Streak,
+    UserLessonProgress,
+)
 
 __all__ = [
     "Base",
@@ -13,4 +21,10 @@ __all__ = [
     "Lesson",
     "Exercise",
     "ExerciseType",
+    "UserLessonProgress",
+    "LessonProgressStatus",
+    "LessonAttempt",
+    "ExerciseAttempt",
+    "Streak",
+    "DailyActivity",
 ]
