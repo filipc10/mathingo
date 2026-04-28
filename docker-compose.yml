@@ -20,17 +20,13 @@ services:
   backend:
     build:
       context: ./backend
-      target: dev
     environment:
       ENVIRONMENT: ${ENVIRONMENT}
       DATABASE_URL: ${DATABASE_URL}
       SECRET_KEY: ${SECRET_KEY}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-      - /app/.venv
+    expose:
+      - "8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,16 +36,11 @@ services:
   frontend:
     build:
       context: ./frontend
-      target: dev
     environment:
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL}
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+    expose:
+      - "3000"
     depends_on:
       - backend
     networks:
