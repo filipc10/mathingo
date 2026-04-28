@@ -422,3 +422,209 @@ Check constraints:
 - Granularita 9 commitů místo plánovaných 7 je v souladu s
   bibliografickým záznamem reálné práce: bumps mají hodnotu, ne
   jejich zametení.
+
+---
+
+## Session 005 — 2026-04-28 — Magic link autentizace (end-to-end)
+
+- **Prompt ID:** #5
+- **Iterací plánu:** 1 (plán schválen napoprvé s drobnými dodatky:
+  `sonner` přidán, race condition explicitně dokumentovat, DoD deviace
+  explicitně)
+- **Uživatelských zpráv v session:** 3 (prompt + plán schválení + finální review)
+- **Commity v session:** 12 plánovaných + 3 fix commity = **15**
+
+### Cíl
+End-to-end magic link auth flow: `/signin` → email z Resend → klik na
+magic link → `/auth/verify` route handler → backend ověří + vystaví JWT
+session cookie → onboarding (pro nové) nebo `/learn` (pro vracející se).
+Žádné endpointy mimo auth doménu.
+
+### Co fungovalo na první pokus
+- Backend commits 1–7 (deps, config, seed migrace, email service, auth
+  service, signin / verify / onboarding / me / signout endpointy)
+  prošly bez kompilační chyby.
+- Seed migrace pro 4MM101 kurz přes `ON CONFLICT (code) DO NOTHING` —
+  idempotentní, jeden řádek vložen napoprvé.
+- Resend API: signin endpoint vystavil row v `magic_link_tokens`,
+  HTTP POST na Resend prošel, email reálně dorazil na inbox.
+- shadcn init s `--defaults --yes`: bez interaktivních promptů, šest
+  primitiv (button, input, label, card, radio-group, sonner) přidáno.
+- E2E backend přes injected test token (vyhnutí se nutnosti čekat na
+  email): verify → 302 + Set-Cookie ✓; consumed_at se nastavil; druhé
+  použití stejného tokenu vrátilo `/signin?error=invalid_or_expired`;
+  onboarding → 200; collision → 409; signout → cookie cleared;
+  unauth /me → 401.
+
+### Co bylo potřeba opravit
+
+#### Bug 1: Compose nepřeposlal nové env vars do backend kontejneru (commit `c395dcf`)
+Po commitu 1, kdy `app/config.py` získalo `resend_api_key`, `jwt_secret`,
+`app_url` jako required fields, backend container po rebuildu spadl s
+`pydantic_core.ValidationError: Field required`. `.env` na hostu měl
+správné hodnoty, ale `docker-compose.yml` backend service má
+**kuratorovaný `environment:` block** — nové vary musely být explicitně
+přidány. Pydantic-settings nemůže splnit required field, který nikdy
+nevidí.
+
+**Fix:** doplnit `RESEND_API_KEY`, `JWT_SECRET`, `APP_URL` do
+`environment:` v base `docker-compose.yml` (týká se i dev).
+
+**Lekce:** Kuratorovaný env block je oboustranný — vidí jen to, co se
+vyjmenuje. Při přidání config keys nezapomenout na compose passthrough.
+Plus: u required Pydantic fields se chyba projeví jako container crash
+loop, ne jako varování.
+
+#### Bug 2: shadcn Button nemá `asChild` prop (commit `7b077ac`)
+Frontend build selhal v TypeScript fázi:
+`Property 'asChild' does not exist on type ... ButtonProps`. shadcn
+"new-york" registry teď generuje Button postavený nad `@base-ui/react`
+(ne Radix). Base UI Button neexponuje `asChild`. Můj
+`<Button asChild><Link>...</Link></Button>` (Radix-style pattern)
+nefungoval.
+
+**Fix:** stylovat Link přímo přes `buttonVariants` helper exportovaný
+z `button.tsx`:
+```tsx
+<Link className={cn(buttonVariants({size:"lg"}), "mt-8")}>Začít</Link>
+```
+Sémanticky lepší — je to navigation link, ne button.
+
+**Lekce:** shadcn API se mění napříč registry style verzemi a
+underlying primitive libs. Při použití komponent z čerstvě init-ovaného
+projektu ověřit aktuální export shape (`Read` na vygenerovaný soubor),
+nepředpokládat staré Radix pattern z paměti.
+
+#### Bug 3: Verify route handler vracel redirect na 0.0.0.0 (commit `309a84b`)
+Smoke test ukázal:
+`/auth/verify (no token) → 302 → https://0.0.0.0:3000/signin?error=...`.
+Next.js `req.url` v route handleru vrací **interní listen address**, ne
+externí host (i když nginx forwarduje `Host` header). `new URL(location,
+req.url)` tedy konstruoval špatnou base.
+
+**Fix:** nepoužívat `NextResponse.redirect` (chce absolutní URL). Místo
+toho ručně skládat `NextResponse(null, {status:302, headers:{Location:
+relative_path}})`. Browser per RFC 7231 resolvuje relative Location
+proti URL skutečně odeslanému, takže původní `mathingo.cz` se použije.
+
+**Lekce:** Za reverse proxy se automaticky nepřebírá `Host` header do
+parsed origin. Pro redirect z route handleru je `Location: <relative
+path>` nejbezpečnější (browser to vyřeší, ne server).
+
+### Rozhodnutí, která stojí za zaznamenání
+
+- **Token bezpečnost:** `secrets.token_urlsafe(32)` (32 bytes URL-safe) →
+  SHA-256 hex digest v DB. Plain token jen v emailu, nikdy nepersistován.
+- **JWT cookie:** HS256, 30-day expiry, `mathingo_session` cookie
+  HttpOnly + Secure (jen v prod) + SameSite=Lax + Max-Age. Žádný
+  refresh token (out of MVP scope).
+- **CSRF:** SameSite=Lax + CORS limit na `https://mathingo.cz` +
+  POST-only mutace = adekvátní bez explicit CSRF tokenu.
+- **Email enumeration:** `/signin` VŽDY vrací `{"status":"sent"}`,
+  žádný early return na neexistujícího uživatele. DB write a Resend
+  volání běží stejně v obou případech (uživatel vzniká až ve `/verify`)
+  → žádný timing oracle.
+- **Inline HTML email** (ne Jinja). Při druhé šabloně refactor na
+  Jinja v jednom commitu.
+- **Next.js route handler pro `/auth/verify`** (ne nginx rewrite).
+  Backend zůstává čistá API pod `/api/*`, frontend vlastní user-facing
+  URL prostor.
+- **Display name uniqueness app-vrstva, case-sensitive.** SELECT-then-
+  INSERT race tolerated pro MVP, dokumentováno níže.
+- **Seed migrace přes `ON CONFLICT (code) DO NOTHING`** + lookup by
+  code ve verify endpointu. Žádné UUID hardcodované v Python kódu.
+- **Sonner pro toast feedback** — display_name collision teď + budoucí
+  XP earned / streak prolonged notifikace.
+
+### Known limitations (acceptable for MVP)
+
+- **display_name uniqueness race condition.** SELECT-then-INSERT
+  pattern v `POST /auth/onboarding` má TOCTOU race: dva concurrent
+  submity stejného display_name můžou oba projít. Akceptabilní pro
+  MVP s low concurrent signup. Fix v budoucnu = normalized lower-case
+  sloupec s DB UNIQUE indexem (jednou migrací přidat
+  `display_name_normalized`, naplnit `LOWER(display_name)`, UNIQUE
+  index, app vrstva validuje proti normalizované formě).
+- **Magic link cleanup.** Žádný background job nemaže expired /
+  consumed tokeny. `magic_link_tokens` časem narůstá. Cleanup task
+  v samostatné session (cron uvnitř backendu nebo periodická migrace
+  `DELETE WHERE expires_at < now() - interval '7 days'`).
+
+### Known deviations from CLAUDE.md DoD
+
+- **Tests deferred to a follow-up session.** CLAUDE.md DoD vyžaduje
+  "covered by at least one automated test (unit or integration)".
+  Tato session končí bez pytest tests pro auth flow. Důvod: 12+ commit
+  session, testovací infrastruktura (httpx mock pro Resend, async test
+  DB, fixtures) by sessionu prodloužila o ~5 commitů. Plán pokrytí v
+  samostatném *prompt #5.1 — auth tests*: pytest-asyncio, respx (httpx
+  mock), tmp test schema přes alembic na samostatné test DB. Tato
+  deviace je vědomá, ne přehlédnutí.
+
+### Použité verze (přírůstky)
+
+| Komponenta | Verze |
+|---|---|
+| pyjwt | 2.12.1 |
+| email-validator | 2.3.0 |
+| dnspython (transitivní) | 2.8.0 |
+| shadcn registry style | "new-york" + Base UI primitives |
+| @base-ui/react | 1.4.x |
+| sonner | 2.0.7 |
+| lucide-react | 1.12.0 |
+
+### Verifikační výstupy
+
+**Backend e2e přes vstříknutý test token:**
+
+```
+POST /api/auth/signin                            → 200 {"status":"sent"} + token row
+GET  /api/auth/verify?token=<plain>              → 302 → /onboarding + Set-Cookie
+GET  /api/auth/me   (s cookie)                   → 200 {id, email, display_name:"", daily_xp_goal:20}
+GET  /api/auth/verify?token=<same plain>         → 302 → /signin?error=invalid_or_expired
+POST /api/auth/onboarding {display_name, goal}   → 200 {"status":"ok"}
+GET  /api/auth/me                                → 200 (updated)
+POST /api/auth/onboarding (kolize z 2. uživatele)→ 409 {"detail":"display_name_taken"}
+POST /api/auth/signout                           → 200 + Set-Cookie clearing
+GET  /api/auth/me   (bez cookie)                 → 401
+```
+
+**Frontend smoke (HTTP status):**
+
+```
+/             → 200
+/signin       → 200
+/check-email  → 200
+/onboarding   → 307 → /signin (anonymní)
+/learn        → 307 → /signin (anonymní)
+/auth/verify  → 302 → /signin?error=invalid_or_expired (bez tokenu)
+```
+
+**Resend integrace:** signin endpoint úspěšně volal Resend API,
+`magic_link_tokens` row vytvořen, email reálně doručený do inboxu na
+`filip.cupl@gmail.com`. Manuální klik na link v reálné GUI session +
+end-to-end frontend flow — ověřuje uživatel ve své prohlížečce.
+
+### Dojem
+
+- 12 plánovaných commitů + 3 fix commity = 15. Tři fixy během
+  jedné session je víc než předchozí sessiony — odpovídá to faktu,
+  že auth flow integruje mezi více vrstvami (config / DB / docker-
+  compose / nginx / frontend / Next.js), kde každá má vlastní
+  subtleties.
+- Bug 1 (compose env passthrough) by mě možná napadl až ze zkušenosti.
+  V budoucnu si pamatovat: jakákoli nová required `Settings` field
+  musí být passthroughovaná v compose `environment:` bloku.
+- Bug 2 (shadcn API drift): shadcn ekosystem se vyvíjí rychleji než
+  paměť. Při použití komponent z čerstvě init-ovaného projektu
+  ověřovat reálný export shape čtením generated souboru.
+- Bug 3 (route handler URL parsing): Next.js za reverse proxy má
+  subtle gotcha kolem origin parsování. Relative Location je
+  nejjednodušší robustní fix; řeší to navíc i případnou budoucí změnu
+  hostu.
+- *Tests deferred* je vědomé — auth bez tests do produkce není ideál,
+  ale explicitní DoD deviation v journalu je transparentnější než
+  falešný claim "all tests passing".
+- Resend integrace prošla bez bumps — DNS verifikace domény + API
+  klíč v `.env` stačily. Moment, kdy email reálně dorazí, je něco,
+  co testovací mock nezprostředkuje.
