@@ -56,6 +56,7 @@ class UserLessonProgress(IDMixin, TimestampMixin, Base):
             length=20,
             validate_strings=True,
             values_callable=lambda obj: [e.value for e in obj],
+            create_constraint=True,
         ),
         nullable=False,
         server_default=text("'locked'"),
