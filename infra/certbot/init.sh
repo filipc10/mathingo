@@ -42,8 +42,12 @@ openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
     -subj "/CN=${DOMAIN}" 2>/dev/null
 touch "${DUMMY_MARKER}"
 
-echo "==> [2/5] Start nginx (only nginx — backend/frontend stay down)"
-docker compose up -d --no-deps nginx
+echo "==> [2/5] Start nginx (and its dependencies — backend, frontend, postgres)"
+# nginx config has proxy_pass to backend:8000 and frontend:3000; nginx
+# resolves both hostnames at config-load time, so the upstreams must be
+# running before nginx starts. depends_on takes care of the order;
+# we simply don't pass --no-deps.
+docker compose up -d nginx
 sleep 3
 
 echo "==> [3/5] Validate webroot pipeline against LE staging"
