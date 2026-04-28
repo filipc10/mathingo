@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/auth";
 
 export default async function Home() {
@@ -18,9 +19,12 @@ export default async function Home() {
       <p className="mt-4 max-w-md text-lg text-neutral-600 dark:text-neutral-400">
         Procvičování vysokoškolské matematiky po pár minutách denně.
       </p>
-      <Button asChild size="lg" className="mt-8">
-        <Link href="/signin">Začít</Link>
-      </Button>
+      <Link
+        href="/signin"
+        className={cn(buttonVariants({ size: "lg" }), "mt-8")}
+      >
+        Začít
+      </Link>
     </main>
   );
 }
