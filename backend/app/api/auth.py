@@ -1,14 +1,21 @@
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_db
+from app.dependencies import get_current_user
 from app.models import Course, MagicLinkToken, User
-from app.schemas.auth import SignInRequest, SignInResponse
+from app.schemas.auth import (
+    MeResponse,
+    OnboardingRequest,
+    OnboardingResponse,
+    SignInRequest,
+    SignInResponse,
+)
 from app.services.auth import (
     create_session_jwt,
     generate_magic_link_token,
@@ -98,3 +105,39 @@ async def verify(
     response = RedirectResponse(url=redirect_url, status_code=302)
     _set_session_cookie(response, create_session_jwt(user.id))
     return response
+
+
+@router.post("/onboarding", response_model=OnboardingResponse)
+async def onboarding(
+    payload: OnboardingRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OnboardingResponse:
+    collision = await db.execute(
+        select(User).where(
+            User.display_name == payload.display_name,
+            User.id != user.id,
+        )
+    )
+    if collision.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="display_name_taken",
+        )
+
+    user.display_name = payload.display_name
+    user.daily_xp_goal = payload.daily_xp_goal
+    await db.commit()
+
+    return OnboardingResponse(status="ok")
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(user: User = Depends(get_current_user)) -> MeResponse:
+    return MeResponse.model_validate(user)
+
+
+@router.post("/signout")
+async def signout(response: Response) -> dict[str, str]:
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+    return {"status": "ok"}
