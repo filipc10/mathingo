@@ -39,6 +39,9 @@ htmlcov/
 *.swo
 *~
 
+# ---- Claude Code (local-only state) ----
+.claude/settings.local.json
+
 # ---- OS ----
 .DS_Store
 Thumbs.db
