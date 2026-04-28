@@ -129,6 +129,7 @@ class Exercise(IDMixin, TimestampMixin, Base):
             native_enum=False,
             length=20,
             validate_strings=True,
+            values_callable=lambda obj: [e.value for e in obj],
         ),
         nullable=False,
     )
