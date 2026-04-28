@@ -1,0 +1,12 @@
+Alembic migrations for the mathingo backend.
+
+Generic single-database configuration with an async engine
+(SQLAlchemy 2.0 + asyncpg). The DATABASE_URL is read from the
+application's pydantic settings in env.py — alembic.ini does not
+hold any credentials.
+
+To create a new revision after model changes:
+    docker compose exec backend alembic revision --autogenerate -m "<message>"
+
+To apply migrations:
+    docker compose exec backend alembic upgrade head
