@@ -101,3 +101,124 @@ reportuje stav app i DB, `/docs` Swagger UI.
   prostředí, druhá je past, která se snadno přenese z jiných stacků
   (frontend `.dockerignore` šablony) bez toho, aby se ověřilo, jestli
   build backend daného jazyka README opravdu nepotřebuje.
+
+---
+
+## Session 003 — 2026-04-28 — Production deployment behind nginx + Let's Encrypt
+
+- **Prompt ID:** #3 (nginx + Let's Encrypt + compose split)
+- **Iterací plánu:** 2 (první plán pauznut na pre-flight nálezu Cloudflare proxy; druhý plán šel po user-side grey-cloudu DNS)
+- **Uživatelských zpráv v session:** 4 (prompt + grey-cloud potvrzení + plán schválení; čtvrtá je tato po-deploy review)
+- **Commity v session:** 7 plánovaných + 1 fix commit pro `--no-deps`
+
+### Cíl
+Aplikace běží produkčně na `https://mathingo.cz`, backend pod `/api/...`, www → apex
+redirect, validní LE cert s auto-renewalem, porty 3000/8000 už nejsou venku.
+Lokální vývoj musí dál fungovat přes `docker compose up`.
+
+### Co fungovalo na první pokus
+- **Pre-flight DNS check zachytil Cloudflare proxy** — `dig` ukázal `172.67.x.x`/
+  `104.21.x.x` IP rangy a HTTP odpověď měla `Server: cloudflare` + `CF-RAY`.
+  Bez toho by HTTP-01 challenge selhalo na proxy a pravděpodobně bych nasadil
+  cert, který browser stejně neviděl. Cena: pět minut + jeden round trip s uživatelem.
+- **Compose split** (base + dev override + prod override) prošel napoprvé
+  bez build issue. `docker compose -f base -f dev config --quiet` validace OK,
+  totéž s prod.
+- **nginx Dockerfile build** napoprvé.
+- **`/api/` rewrite** přes trailing slash na `proxy_pass http://backend:8000/;` —
+  funkční bez jediné změny v `backend/app/`. `/api/health` vrátí stejný JSON jako
+  interní `/health` na backendu.
+- **HSTS, HTTP→HTTPS redirect, www→apex redirect** — všechno na první pokus.
+- **`certbot renew --dry-run`** simulace renewalu prošla na první pokus
+  po vystavení ostrého certu: "all simulated renewals succeeded".
+
+### Co bylo potřeba opravit
+1. **Cloudflare proxy v cestě.** Pre-flight zjistil, že DNS pro `mathingo.cz`
+   vede přes Cloudflare. To by znamenalo: (a) browser vidí CF cert, ne LE cert
+   (verifikační test by selhal), (b) webroot challenge přes CF proxy je křehčí.
+   Pauznul jsem plánovací fázi, vysvětlil tři možnosti (grey-cloud, DNS-01,
+   drop LE), uživatel grey-cloudoval.
+   **Lekce:** Pre-flight read-only ověření před produkčním change není přepych —
+   DNS realita se může lišit od user mental model "DNS ukazuje na VPS".
+
+2. **`--no-deps` zablokoval webroot challenge.** První spuštění `init.sh`
+   selhalo v phase 3 s LE "connection refused" na portu 80. nginx visel
+   v restart loopu s `host not found in upstream "backend"` — `docker compose
+   up -d --no-deps nginx` nestartne backend, ale nginx config rezolvuje
+   `proxy_pass http://backend:8000/;` při config load. Oprava: sundat
+   `--no-deps`. compose chain (postgres → backend → frontend → nginx)
+   zařídí backend dostupnost před nginx startem. Přidá to ~30 s na cold
+   bootstrap, ale je to robustnější. Defenzivnější alternativa (resolver +
+   variable v nginx pro late-binding DNS) odložena, protože vyžaduje
+   `rewrite ... break;` aby /api/ stripping fungoval s variable proxy_pass.
+   **Lekce:** nginx static `proxy_pass` rezolvuje hostnames při config load;
+   v Dockeru s `--no-deps` to znamená "upstream musí už existovat".
+
+3. **Backend a frontend image v dev stage cached z prompt #2.** Po prvním
+   úspěšném `docker compose up -d` běžel backend s `--reload` a frontend
+   s `npm run dev` — Docker reusoval cached `mathingo-backend:latest` /
+   `mathingo-frontend:latest`, které byly built z prompt #2 jako dev target.
+   Compose s prod override neoznačuje target (defaultuje na poslední stage =
+   runner), ale cache se nehnula. Oprava: `docker compose build backend
+   frontend` + `docker compose up -d --force-recreate`. Pak backend běží
+   `uvicorn app.main:app` bez `--reload`, frontend `node server.js` (Next.js
+   standalone).
+   **Lekce:** `docker compose build` (bez `--no-cache`) bere z cache i když
+   compose definice změnila build target — tagy `<project>-<service>:latest`
+   se neliší dev↔prod. Po změně targetu rebuildovat explicitně.
+
+### Rozhodnutí, která stojí za zaznamenání
+- **`COMPOSE_FILE` v `.env`** místo Makefile. `docker compose up` (bez `-f`)
+  na obou stranách dělá to správné. Nepřidává Make. README a `.env.example`
+  dokumentují per-prostředí hodnotu.
+- **Initial cert přes webroot s dummy cert bootstrap** (vs. standalone-then-
+  reload). Single nginx config, žádný runtime swap konfigů. Dummy cert
+  (self-signed, 1 day) jen aby nginx nabootoval; po vystavení ostrého
+  certu se dummy smaže a real nahradí. Sentinel `.bootstrap-dummy` chrání
+  před nešťastným re-runem na produkci.
+- **`--staging` → `delete` → prod cert.** LE staging dry-run validuje celý
+  webroot pipeline bez rate-limit risku. Až pak ostrá emise.
+- **Auto-renewal: cron na hostu** (vs dedicated service). Standardní pattern,
+  transparentní logy v dedicated `/var/log/mathingo-renewal.log`. Sentinel
+  komentář `# mathingo:letsencrypt-renewal` v cron řádku dělá installer
+  idempotentní.
+- **`/api/` rewrite přes trailing slash na `proxy_pass http://backend:8000/`.**
+  Žádné změny v `backend/app/`. FastAPI o prefixu neví.
+- **Frontend `lib/api.ts`** rozlišuje server-side (Docker DNS na `backend:8000`)
+  vs client-side (relativní `/api` přes nginx). Žádný fetch wrapper, žádné
+  error handlingu — jen URL resolution.
+
+### Výslovně out of scope této session
+- **Firewall (`ufw`).** Aktivace `ufw` z SSH session má historický track-record
+  bricknutí serveru. Pro thesis projekt nepotřebný risk: dev porty 3000/8000
+  už **nejsou** published z Dockeru (prod override nedeklaruje host ports
+  pro frontend/backend), takže ven nejdou. `ss -tlnp | grep -E ':(3000|8000)'`
+  vrací prázdno. Aktivace ufw z hostingové konsole je volitelnost na později.
+- **Cloudflare proxy.** Po dokončení LE deployment je možné CF znovu zapnout
+  v módu "Full (Strict)" (LE cert na originu, CF terminuje TLS s vlastním
+  edge cert) pokud bude zájem o CDN/DDoS. Aktuálně žádné CF mezi browser
+  a VPS.
+- **`restart: unless-stopped`** je v prod override, ale není ověřeno přes
+  host reboot. Otestovatelné při příští restartu VPS.
+
+### Použité verze a artefakty
+| Komponenta | Verze |
+|---|---|
+| nginx | 1.27 (Alpine) |
+| certbot | image `certbot/certbot:latest` (v3.x) |
+| LE cert | issuer C=US, O=Let's Encrypt, CN=E8 |
+| Cert validity | 2026-04-28 19:01 UTC → 2026-07-27 19:01 UTC |
+| Cron schedule | `0 3 * * *` (denně 03:00) |
+
+### Dojem
+- **Pre-flight DNS check** byl jediná věc, která zachránila session od
+  potenciálního cert rate-limitu (5 fail/h, 5 cert/domain/týden u LE prod).
+  Cena pěti minut.
+- Tři postupně odkrývané chyby (CF proxy → `--no-deps` → dev image cache)
+  byly každá samostatně rychle opravitelná, ale dohromady ilustrují,
+  že každá vrstva (DNS / orchestrace / image cache) má vlastní subtleties,
+  které pre-build validace nezachytí. Pro reflexi v BP cenné.
+- Granulární commits + per-session journal entry s "co fungovalo /
+  co bylo třeba opravit" rozpisem dělají session retrospektivně
+  srozumitelnou. Po půl roce (až budu psát thesis writeup) budu vědět,
+  co rozhodlo a proč.
