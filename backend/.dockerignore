@@ -15,6 +15,5 @@ htmlcov
 .env.*
 Dockerfile
 .dockerignore
-README.md
 *.log
 .DS_Store
