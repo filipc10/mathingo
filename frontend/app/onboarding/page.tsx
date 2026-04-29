@@ -16,7 +16,7 @@ export default async function OnboardingPage() {
   if (!user) {
     redirect("/signin");
   }
-  if (user.display_name !== "") {
+  if (user.first_name !== "" && user.display_name !== "") {
     redirect("/learn");
   }
 
@@ -32,7 +32,7 @@ export default async function OnboardingPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <OnboardingForm />
+          <OnboardingForm initialDisplayName={user.display_name} />
         </CardContent>
       </Card>
     </main>

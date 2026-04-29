@@ -33,7 +33,11 @@ const GOALS = [
   },
 ];
 
-export function OnboardingForm() {
+export function OnboardingForm({
+  initialDisplayName = "",
+}: {
+  initialDisplayName?: string;
+}) {
   const [pending, startTransition] = useTransition();
 
   function onSubmit(formData: FormData) {
@@ -48,19 +52,38 @@ export function OnboardingForm() {
   return (
     <form action={onSubmit} className="grid gap-6">
       <div className="grid gap-2">
+        <Label htmlFor="first_name" className="font-bold">
+          Jak ti říkat?
+        </Label>
+        <Input
+          id="first_name"
+          name="first_name"
+          minLength={1}
+          maxLength={40}
+          required
+          autoComplete="given-name"
+          autoFocus
+        />
+        <p className="text-xs font-medium text-muted-foreground">
+          Např. Filip nebo Anna. Použijeme to při oslovení.
+        </p>
+      </div>
+
+      <div className="grid gap-2">
         <Label htmlFor="display_name" className="font-bold">
           Přezdívka
         </Label>
         <Input
           id="display_name"
           name="display_name"
+          defaultValue={initialDisplayName}
           minLength={3}
-          maxLength={40}
+          maxLength={30}
           required
           autoComplete="nickname"
         />
         <p className="text-xs font-medium text-muted-foreground">
-          3 až 40 znaků. Uvidí ji ostatní v žebříčku.
+          3 až 30 znaků. Uvidí ji ostatní v žebříčku.
         </p>
       </div>
 
@@ -78,7 +101,7 @@ export function OnboardingForm() {
               className={cn(
                 "flex cursor-pointer items-center gap-4 rounded-xl border-2 p-4 transition-all",
                 "hover:border-primary/40 hover:bg-primary/5",
-                "has-[[data-checked]]:border-primary has-[[data-checked]]:bg-primary/5",
+                "has-[[data-checked]]:border-primary has-[[data-checked]]:bg-primary/10",
               )}
             >
               <RadioGroupItem value={g.value} id={`goal-${g.value}`} />

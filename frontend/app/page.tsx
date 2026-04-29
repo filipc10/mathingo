@@ -8,7 +8,9 @@ import { getCurrentUser } from "@/lib/auth";
 export default async function Home() {
   const user = await getCurrentUser();
   if (user) {
-    redirect(user.display_name === "" ? "/onboarding" : "/learn");
+    const needsOnboarding =
+      user.first_name === "" || user.display_name === "";
+    redirect(needsOnboarding ? "/onboarding" : "/learn");
   }
 
   return (

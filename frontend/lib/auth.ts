@@ -4,6 +4,7 @@ import { apiUrl } from "./api";
 export type CurrentUser = {
   id: string;
   email: string;
+  first_name: string;
   display_name: string;
   daily_xp_goal: number;
 };
