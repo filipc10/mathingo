@@ -11,6 +11,9 @@ const nunito = Nunito({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL ?? "https://mathingo.cz",
+  ),
   title: "Mathingo",
   description: "Procvičování matematiky ve stylu Duolinga.",
 };
