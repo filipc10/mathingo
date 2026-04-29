@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Nunito } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 
 const nunito = Nunito({
