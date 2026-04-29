@@ -24,6 +24,8 @@ from app.schemas.content import (
     CourseProgressResponse,
     CourseResponse,
     CourseStructure,
+    ExerciseCheckRequest,
+    ExerciseCheckResponse,
     ExerciseResult,
     LessonDetail,
     ProgressInfo,
@@ -199,6 +201,38 @@ def _evaluate(exercise: Exercise, user_answer: Any) -> tuple[bool, Any]:
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail=f"unsupported_exercise_type_{exercise.exercise_type}",
+    )
+
+
+@router.post(
+    "/exercises/{exercise_id}/check",
+    response_model=ExerciseCheckResponse,
+)
+async def check_exercise_answer(
+    exercise_id: UUID,
+    request: ExerciseCheckRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ExerciseCheckResponse:
+    """Evaluate a single answer immediately, without persisting anything.
+
+    Used by the lesson runner to show per-exercise feedback. Persistence
+    (lesson_attempt, streak, daily_activity) still happens at lesson end via
+    /lessons/{id}/submit, which re-evaluates server-side as defense-in-depth.
+    """
+    exercise = (
+        await db.execute(select(Exercise).where(Exercise.id == exercise_id))
+    ).scalar_one_or_none()
+    if exercise is None:
+        raise HTTPException(status_code=404, detail="exercise_not_found")
+
+    is_correct, correct_answer = _evaluate(exercise, request.answer)
+    return ExerciseCheckResponse(
+        exercise_id=exercise.id,
+        correct=is_correct,
+        user_answer=request.answer,
+        correct_answer=correct_answer,
+        explanation=exercise.explanation,
     )
 
 

@@ -118,5 +118,20 @@ class CourseProgressResponse(BaseModel):
     completed_lesson_ids: list[UUID]
 
 
+# ---------- Per-exercise check (stateless, no DB write) ----------
+
+
+class ExerciseCheckRequest(BaseModel):
+    answer: StrictInt | StrictFloat | str
+
+
+class ExerciseCheckResponse(BaseModel):
+    exercise_id: UUID
+    correct: bool
+    user_answer: int | float | str
+    correct_answer: int | float | str
+    explanation: str | None
+
+
 # Resolve the forward-ref for SubmissionResponse.progress
 SubmissionResponse.model_rebuild()
