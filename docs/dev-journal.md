@@ -818,3 +818,225 @@ prohlížeč není v exekuční prostředí dostupný):
   získá pohled, jak se Claude Code chová s "fluffy" task: méně
   konkrétních specifikací, více estetických rozhodnutí, ale
   stejná struktura plán → execution → review.
+
+---
+
+## Session 007 — 2026-04-29 — Dark mode + first_name + vokativ
+
+- **Prompt ID:** #7
+- **Iterací plánu:** 1 (plán schválen napoprvé s úpravami: czech-vocative
+  knihovna místo hand-rolled heuristic, prefill display_name z existing
+  user record, plus user dropoval logo + favicon do repa pro integraci)
+- **Uživatelských zpráv v session:** 3 (prompt + plán schválení +
+  „favicon je šíleně malý" feedback)
+- **Commity v session:** 9 plánovaných + 2 fix commity (favicon size,
+  v dvou iteracích) = **11**
+
+### Cíl
+
+Tři logicky propojené změny:
+1. Dark mode jako default napříč aplikací (žádný toggle).
+2. Rozdělit `display_name` na `first_name` (oslovení, NOT unique) +
+   `display_name` (handle, unique).
+3. České vokativní oslovení — `vocative("Filip") → "Filipe"`.
+
+### Co fungovalo na první pokus
+
+- Replace `globals.css` připraveným dark obsahem + `dark` className
+  na `<html>`. Všechny existující komponenty (z prompt #5, #6)
+  auto-pickly tokens — žádné explicit dark-mode override potřebné.
+- Alembic autogenerate detekoval nový `first_name` sloupec na první
+  pokus (po model edit + container rebuild).
+- E2E reonboarding flow ověřen přes injected token: nový user
+  s `first_name=""` → /onboarding ✓; po onboarding submit →
+  display_name a first_name updatnuté v DB ✓; pokus o submit
+  s prázdným first_name → 422 s Pydantic detail ✓.
+- `czech-vocative@2.1.0` knihovna pokrývá víc než moje původní
+  hand-rolled heuristic by zvládla — viz „Test cases" níže.
+- Logo `<Image>` v /learn top baru přes next/image — automatická
+  AVIF/WebP optimalizace na produkci.
+
+### Co bylo potřeba opravit
+
+#### Bug: favicon vypadal šíleně malý (commits `b4ce907`, `c8f1878`)
+
+První integrace favicon source PNG (1536×1024) → resize na 512×512
+proběhla přes pad-to-square (transparent okraje top/bottom). Po
+resize byl skutečný non-transparent obsah jen `bbox 191×188`
+uvnitř `512² canvasu` — fill ratio 37 % × 37 %. Při browser render
+na 16 px nebo 32 px favicon „M" byl drobný uprostřed velké prázdné
+plochy.
+
+Uživatel feedback (1. kolo): „Favicon je šíleně malý."
+
+**Fix v1 (`b4ce907`):** re-crop existujícího `icon.png` k jeho
+reálnému content bbox + 8 % margin, pad na čtverec, resize zpět na
+512×512. Nový bbox 441×434 = fill ratio 86 % × 85 %. Plus přidán
+`apple-icon.png` 180×180 pro retina iPhone home-screen tiles.
+
+Uživatel feedback (2. kolo): „ještě by ta ikona mohla být větší".
+
+**Fix v2 (`c8f1878`):** snížit margin z 8 % na 2 %. Fill ratio
+~96 % × 93 % — content prakticky zaplňuje canvas. Edge-to-edge
+look typický pro square brand-mark icons (Twitter X, GitHub
+Octocat). Apple-icon regenerován z téhož canvasu.
+
+**Lekce:** Pro favicon nestačí jen square dimension — content
+musí zaplnit většinu canvasu (>90 %). Pad-to-square preserve aspect
+funguje pro hero images, ale pro tiny render na 16 px je jakákoli
+viditelná prázdná oblast moc drahá v perceived brightness ratio.
+8 % bylo „bezpečné" víc než „dostatečné". Iterace s reálným uživatelským
+viewem byly nutné — Claude Code nemá náhled do skutečného browser
+renderu.
+
+### Rozhodnutí, která stojí za zaznamenání
+
+- **Dark mode jako default, žádný toggle** — komise vidí Mathingo
+  v dark, žádný light/dark preference matching s prefers-color-scheme.
+  `.light` selektor zachován v CSS jako parked block, kdyby se to
+  v budoucnu chtělo přepnout. Akademický framework v thesis
+  kapitole 6: srovnání s Duolingo dark mode + odlišení od typických
+  „bílých" edukačních apps.
+- **`first_name` separátně od `display_name`** — UX motivace: jméno
+  je oslovení (osobní), přezdívka je handle (veřejná v žebříčku).
+  Spojení do jediného sloupce v session 004 byla zjednodušující
+  zkratka. Po této session má každé pole vlastní constraints
+  (first_name 1-40 not unique, display_name 3-30 unique).
+- **Empty string sentinel pro „needs onboarding"** zachováno + 
+  rozšířeno: `first_name=="" or display_name==""` triggers
+  `/onboarding`. Žádný nový boolean flag column. Existující user
+  (Filip) získal `first_name=""` přes server_default v migraci a
+  bude reonboardován, kdy se znovu signinne.
+- **Migration server_default + alter_column drop** — `add_column
+  ... server_default=''` backfill existing rows; pak
+  `alter_column server_default=None` čistí default tak, aby budoucí
+  inserts musely explicit. Cleaner schema, žádný persistent default
+  v DB.
+- **`czech-vocative` knihovna místo hand-rolled rules** — uživatel
+  override po prvním plánu. Knihovna pokrývá irregulární vokativy
+  (Pavel → Pavle, Karel → Karle), které heuristika z briefu by
+  netrefila. Přidaná závislost vědomě schválená v plánu (per
+  CLAUDE.md hard-constraint #1).
+- **Onboarding form prefill `display_name` z existing user, ale
+  `first_name` empty** — pro reonboarding existujících uživatelů
+  (Filip má `display_name="Filip"` survivuje migraci) lepší UX:
+  nemusí psát handle znovu, jen vyplní jméno. Pro nového uživatele
+  oba inputy prázdné.
+- **Logo přes `next/image` v /learn top baru** — z 1672×941 source
+  resized na 1200×675 a uložen v `frontend/public/logo.png`.
+  Next image pipeline pak generuje AVIF/WebP variants na
+  produkční doméně.
+
+### Test cases pro vokativ
+
+```
+vocative("Filip")   → "Filipe"   ✓
+vocative("Pavel")   → "Pavle"    ✓ (irregular — drops -e- before -l)
+vocative("Karel")   → "Karle"    ✓ (irregular)
+vocative("Michal")  → "Michale"  ✓
+vocative("Tomáš")   → "Tomáši"   ✓
+vocative("Petr")    → "Petře"    ✓
+vocative("Anna")    → "Anno"     ✓
+vocative("Marie")   → "Marie"    ✓ (ženské -e/-ě beze změny)
+vocative("Honza")   → "Honzo"    ✓
+vocative("Jiří")    → "Jiří"     ✓
+vocative("Mateusz") → "Mateuszi" ✓ (cizí jméno, knihovna stále
+                                   produkuje vokativní formu)
+vocative("Eva")     → "Evo"      ✓
+vocative("Lucie")   → "Lucie"    ✓
+vocative("Aleš")    → "Aleši"    ✓
+```
+
+Všechny standardní česká jména korektně. Cizí (Mateusz) dostávají
+„best-effort" inflekci — knihovna Czech-rules-applies-to-foreign-input.
+Pro thesis kapitolu 4 (UX i18n): full Czech inflection coverage je
+detail, který hand-rolled approach by neuznesl bez signifikantního
+rozšíření.
+
+### Použité verze (přírůstky)
+
+| Komponenta | Verze |
+|---|---|
+| czech-vocative | 2.1.0 |
+| Pillow (host-only, image processing) | 10.2.0 |
+| Alembic migration | `5d9486ef38a3` (add first_name to users) |
+
+### Verifikační výstupy
+
+**HTTP smoke:**
+```
+/                       → 200
+/signin                 → 200
+/check-email            → 200
+/onboarding (anon)      → 307 → /signin
+/learn (anon)           → 307 → /signin
+/icon.png               → 200 (image/png, ~96%×93% content fill po druhém fixu)
+/apple-icon.png         → 200 (180×180)
+/logo.png               → 200 (1200×675 served via next/image pipeline)
+```
+
+**E2E auth flow (přes injected token):**
+```
+POST /api/auth/signin → 200
+GET  /api/auth/verify (s tokenem) → 302 → /onboarding + Set-Cookie
+GET  /api/auth/me → 200 {first_name: "", display_name: "", goal: 20}
+POST /api/auth/onboarding {first_name:"Pavel",...} → 200 {"status":"ok"}
+GET  /api/auth/me → 200 {first_name: "Pavel", display_name: "pavel-e2e", ...}
+GET  /learn (s cookie) → 200, HTML obsahuje "Vítej, Pavle!" (vokativ aktivní)
+POST /api/auth/onboarding {first_name:"",...} → 422 (Pydantic min_length=1)
+```
+
+**HTML rendering (s cookie pro /learn):**
+- `<html lang="cs" class="dark nunito_…__variable">` ✓
+- `<link rel="icon" href="/icon.png?icon.5a7e624b.png" sizes="512x512">` ✓
+- `<link rel="apple-touch-icon" href="/apple-icon.png?…" sizes="180x180">` ✓
+- `<img src="/_next/image?url=%2Flogo.png&…">` (next/image optimized) ✓
+
+**DB schema after migration:**
+```
+users.first_name | character varying(40) | NOT NULL | (no default)
+users.display_name | character varying(40) | NOT NULL | (no default)
+```
+
+### Known limitations / out-of-scope
+
+- **DB constraint `display_name` zůstává `VARCHAR(40)`** zatímco
+  app vrstva validuje 3-30. Schema-level zúžení na `VARCHAR(30)`
+  by potřebovalo destruktivní `ALTER TYPE` — pro 1 existing user
+  s `display_name="Filip"` (5 chars) zbytečné. Lze přidat constraint-
+  -level migraci později pokud bude potřeba.
+- **Vocative pro nominativ-only (např. "Anna" stays "Anno")** —
+  není rozlišení mezi mužem/ženou, knihovna detekuje přes endings.
+  Pro hraniční případy (epicene names) může produkovat unexpected
+  formy, ale v Czech jméneckém prostoru neobvyklé.
+- **Existující user `display_name="Filip"` se survives migraci.**
+  Po jeho příštím signinu zde se musí znovu projít onboardingem
+  (kvůli prázdnému first_name). UX detail: form předvyplní
+  display_name, ale ne first_name.
+
+### Dojem
+
+- 9 plánovaných + 2 fixy = 11 commitů. Vizuální bug (favicon size)
+  vyžadoval dvě iterace — moje první oprava na 86 % fill byla pro
+  uživatelův vkus stále moc malá. Druhá iterace na ~96 % fill prošla.
+  Není to typ chyby, kterou by HTTP smoke nebo Pydantic
+  validation chytila — vyžaduje skutečné prohlížení malého
+  rendered icon. Ukazuje, že reálný visual feedback od uživatele je
+  jediný spolehlivý gate pro tento typ rozhodnutí.
+- `czech-vocative` knihovna je pěkný pattern „specialized
+  third-party" rozhodnutí: hand-rolled regex would cover 60 %
+  cases, knihovna ~100 %, cena = jeden npm dep. Pro thesis
+  kapitolu 6 to je good case study o tom, kdy „postavit vlastní"
+  vs. „použít existující" trade-off.
+- Migration s `server_default + alter_column drop` je standardní
+  Alembic pattern pro NOT NULL backfill, který autogenerate
+  nezvládne. Manuálně doplněno.
+- Existing user reonboarding přes empty-string sentinel zacházel
+  čistě bez nového boolean flag column. Ten přístup škáluje
+  i pro budoucí onboarding fields (např. preferred language,
+  notification preferences) — všechno přes sentinel hodnoty,
+  routovací gate v jednom místě.
+- Pro thesis writeup: kombinace „logically related" změn v jedné
+  session je interesting — ukazuje, jak Claude Code zvládá
+  multi-track plánování (DB + backend + frontend + i18n) bez
+  ztráty kontextu mezi vrstvami.
