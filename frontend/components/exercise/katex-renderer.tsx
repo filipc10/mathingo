@@ -1,18 +1,46 @@
 "use client";
 
+import { Fragment, type ReactNode } from "react";
 import { BlockMath, InlineMath } from "react-katex";
 
 /**
- * Render text containing inline ($...$) and block ($$...$$) math segments.
- * Splits on math delimiters and renders each part with the appropriate KaTeX
- * component. Invalid LaTeX falls back to the original raw text via react-katex's
- * renderError prop so a single bad prompt doesn't crash the page.
+ * Render a single non-math segment with markdown bold and italic.
+ * Bold is split first so that `*foo*` inside `**bar**` stays literal.
+ * Both regexes require a closing delimiter — unclosed `**foo` falls
+ * through as plain text, which is the behavior we want for AI replies
+ * that get cut mid-stream.
+ */
+function parseMarkdown(text: string): ReactNode[] {
+  const boldParts = text.split(/(\*\*[^*]+\*\*)/g);
+  return boldParts.map((boldPart, i) => {
+    if (boldPart.startsWith("**") && boldPart.endsWith("**")) {
+      return <strong key={`b-${i}`}>{boldPart.slice(2, -2)}</strong>;
+    }
+    const italicParts = boldPart.split(/(\*[^*]+\*)/g);
+    return (
+      <Fragment key={`f-${i}`}>
+        {italicParts.map((part, j) => {
+          if (part.startsWith("*") && part.endsWith("*") && part.length >= 2) {
+            return <em key={`i-${j}`}>{part.slice(1, -1)}</em>;
+          }
+          return part;
+        })}
+      </Fragment>
+    );
+  });
+}
+
+/**
+ * Render text containing inline ($...$) and block ($$...$$) math segments
+ * plus markdown bold (**) and italic (*). LaTeX is split first so dollar
+ * signs never collide with markdown asterisks. Invalid LaTeX falls back
+ * to the original raw text via react-katex's renderError prop.
  *
  * Limitations:
- * - Naive regex split — does not support nested or escaped dollar signs.
- *   Our seed content sticks to simple inline math so this is fine.
- * - $$...$$ blocks are still rendered inline-flow; for true block layout
- *   wrap the renderer in a block-level container at the call site.
+ * - Naive regex splits — no nested or escaped delimiters.
+ * - Markdown supports only bold and italic. Code blocks, headings, lists
+ *   and links are out of scope: the AI system prompt asks for short
+ *   pedagogical replies that don't use them.
  */
 export function KaTeXRenderer({ text }: { text: string }) {
   const parts = text.split(/(\$\$[^$]+\$\$|\$[^$]+\$)/g);
@@ -41,7 +69,7 @@ export function KaTeXRenderer({ text }: { text: string }) {
           );
         }
         if (part === "") return null;
-        return <span key={i}>{part}</span>;
+        return <Fragment key={i}>{parseMarkdown(part)}</Fragment>;
       })}
     </>
   );
