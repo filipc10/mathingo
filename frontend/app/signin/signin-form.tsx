@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -24,18 +25,27 @@ export function SigninForm() {
   return (
     <form action={onSubmit} className="grid gap-4">
       <div className="grid gap-2">
-        <Label htmlFor="email">Tvůj e-mail</Label>
+        <Label htmlFor="email" className="font-bold">
+          Tvůj e-mail
+        </Label>
         <Input
           id="email"
           name="email"
           type="email"
           autoComplete="email"
           required
-          placeholder="ty@example.cz"
+          placeholder="tvuj@email.cz"
         />
       </div>
-      <Button type="submit" disabled={pending}>
-        {pending ? "Odesílám…" : "Poslat odkaz"}
+      <Button type="submit" size="lg" disabled={pending} className="mt-2 w-full">
+        {pending ? (
+          <>
+            <Loader2 className="size-4 animate-spin" />
+            Odesílám…
+          </>
+        ) : (
+          "Poslat odkaz"
+        )}
       </Button>
     </form>
   );

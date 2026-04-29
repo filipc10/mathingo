@@ -22,19 +22,21 @@ export default async function SignInPage({
   const errorMessage = params.error ? ERROR_MESSAGES[params.error] : null;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-white px-6 dark:bg-neutral-950">
-      <Card className="w-full max-w-sm">
+    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
+      <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Přihlásit se do Mathingo</CardTitle>
-          <CardDescription>
-            Pošleme ti odkaz, kterým se přihlásíš.
+          <CardTitle className="text-2xl font-extrabold tracking-tight">
+            Přihlas se
+          </CardTitle>
+          <CardDescription className="text-base">
+            Pošleme ti přihlašovací odkaz na e-mail.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent className="grid gap-5">
           {errorMessage && (
             <p
               role="alert"
-              className="text-sm text-red-600 dark:text-red-400"
+              className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm font-medium text-destructive"
             >
               {errorMessage}
             </p>
