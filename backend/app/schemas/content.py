@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt
 
 
 class CourseResponse(BaseModel):
@@ -73,9 +73,12 @@ class AnswerSubmission(BaseModel):
     # answer accepts the union of types the supported exercise types use:
     #   multiple_choice → int (option index)
     #   numeric         → int | float
-    # The endpoint validates the type matches the exercise's exercise_type
-    # at evaluation time.
-    answer: int | float | str
+    # StrictInt / StrictFloat (vs. plain int / float) reject booleans at
+    # parse time — Python's bool is a subclass of int, so a lax Union would
+    # silently coerce true→1 and let it sail past a runtime isinstance check
+    # in the evaluator. With Strict the user gets a Pydantic 422 instead.
+    # `str` is kept for future exercise types (matching, step_ordering).
+    answer: StrictInt | StrictFloat | str
 
 
 class SubmissionRequest(BaseModel):
