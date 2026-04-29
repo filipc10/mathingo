@@ -63,3 +63,40 @@ class LessonDetail(BaseModel):
     description: str | None
     xp_reward: int
     exercises: list[ExerciseResponse]
+
+
+# ---------- Submission ----------
+
+
+class AnswerSubmission(BaseModel):
+    exercise_id: UUID
+    # answer accepts the union of types the supported exercise types use:
+    #   multiple_choice → int (option index)
+    #   numeric         → int | float
+    # The endpoint validates the type matches the exercise's exercise_type
+    # at evaluation time.
+    answer: int | float | str
+
+
+class SubmissionRequest(BaseModel):
+    answers: list[AnswerSubmission]
+
+
+class ExerciseResult(BaseModel):
+    exercise_id: UUID
+    correct: bool
+    user_answer: int | float | str
+    correct_answer: int | float | str
+    explanation: str | None
+
+
+class ScoreSummary(BaseModel):
+    correct_count: int
+    total_count: int
+    all_correct: bool
+
+
+class SubmissionResponse(BaseModel):
+    lesson_id: UUID
+    results: list[ExerciseResult]
+    score: ScoreSummary
