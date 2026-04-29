@@ -96,8 +96,6 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
       setPhase({ kind: "answering" });
       return;
     }
-    // Last exercise — batch-submit so persistence (lesson_attempt, streak,
-    // daily_activity) happens server-side and we get the high-level summary.
     const payload: AnswerSubmission[] = lesson.exercises.map((ex) => ({
       exercise_id: ex.id,
       answer: answers[ex.id] as number | string,
@@ -106,7 +104,6 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
       const outcome = await submitLessonAnswers(lesson.id, payload);
       if (!outcome.ok) {
         toast.error(outcome.error);
-        // Stay on feedback so the user can retry "Dokončit lekci"
         return;
       }
       setPhase({ kind: "summary", submission: outcome.data });
@@ -121,6 +118,28 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
   if (phase.kind === "summary") {
     return <LessonSummary submission={phase.submission} />;
   }
+
+  const exercisePhase: "answering" | "feedback" =
+    phase.kind === "feedback" ? "feedback" : "answering";
+  const correctIndex =
+    phase.kind === "feedback" &&
+    currentExercise?.exercise_type === "multiple_choice" &&
+    typeof phase.data.correct_answer === "number"
+      ? phase.data.correct_answer
+      : undefined;
+
+  // Sticky bottom button label and disabled state depend on phase.
+  const buttonLabel = (() => {
+    if (phase.kind === "checking") return "Ověřuji…";
+    if (phase.kind === "feedback") return isLast ? "Dokončit lekci" : "Pokračovat";
+    return "Zkontrolovat";
+  })();
+  const buttonDisabled =
+    phase.kind === "checking" ||
+    submitting ||
+    (phase.kind === "answering" && !hasAnswer);
+  const buttonAction = phase.kind === "feedback" ? handleContinue : handleCheck;
+  const buttonBusy = phase.kind === "checking" || submitting;
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -139,8 +158,8 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-xl flex-1 flex-col px-6 py-8">
-        <div className="flex-1 space-y-6">
+      <main className="mx-auto w-full max-w-xl flex-1 px-6 pb-32 pt-8">
+        <div className="space-y-6">
           {currentExercise?.exercise_type === "multiple_choice" && (
             <MultipleChoiceExercise
               prompt={currentExercise.prompt}
@@ -149,6 +168,8 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
                 typeof currentAnswer === "number" ? currentAnswer : null
               }
               onSelect={handleAnswer}
+              phase={exercisePhase}
+              correctIndex={correctIndex}
             />
           )}
           {currentExercise?.exercise_type === "numeric" && (
@@ -158,6 +179,7 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
                 typeof currentAnswer === "number" ? currentAnswer : null
               }
               onChange={(v) => handleAnswer(v ?? "")}
+              phase={exercisePhase}
             />
           )}
 
@@ -165,10 +187,8 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
             <>
               <ExerciseFeedback
                 feedback={phase.data}
-                onContinue={handleContinue}
                 onAskAi={handleAskAi}
                 showAskAi={!phase.data.correct && !phase.askingAi}
-                isLast={isLast}
               />
               {phase.askingAi && !phase.data.correct && (
                 <ChatExplainPanel
@@ -179,27 +199,27 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
             </>
           )}
         </div>
-
-        {phase.kind !== "feedback" && (
-          <div className="mt-8">
-            <Button
-              size="lg"
-              className="w-full"
-              disabled={!hasAnswer || phase.kind === "checking" || submitting}
-              onClick={handleCheck}
-            >
-              {phase.kind === "checking" || submitting ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Ověřuji…
-                </>
-              ) : (
-                "Zkontrolovat"
-              )}
-            </Button>
-          </div>
-        )}
       </main>
+
+      <div className="sticky bottom-0 z-10 border-t bg-background/95 px-6 py-4 backdrop-blur">
+        <div className="mx-auto max-w-xl">
+          <Button
+            size="lg"
+            className="w-full"
+            disabled={buttonDisabled}
+            onClick={buttonAction}
+          >
+            {buttonBusy ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                {buttonLabel}
+              </>
+            ) : (
+              buttonLabel
+            )}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

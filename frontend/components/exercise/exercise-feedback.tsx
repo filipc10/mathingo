@@ -16,21 +16,17 @@ export type ExerciseFeedbackData = {
 
 export function ExerciseFeedback({
   feedback,
-  onContinue,
   onAskAi,
   showAskAi,
-  isLast,
 }: {
   feedback: ExerciseFeedbackData;
-  onContinue: () => void;
   onAskAi: () => void;
   showAskAi: boolean;
-  isLast: boolean;
 }) {
   const { correct, user_answer, correct_answer, explanation } = feedback;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div
         className={cn(
           "flex items-start gap-3 rounded-xl border p-4",
@@ -71,22 +67,17 @@ export function ExerciseFeedback({
         </div>
       </div>
 
-      <div className="space-y-3">
-        {showAskAi && (
-          <Button
-            variant="outline"
-            size="lg"
-            className="w-full"
-            onClick={onAskAi}
-          >
-            <Sparkles className="size-4" />
-            Chci to dovysvětlit
-          </Button>
-        )}
-        <Button size="lg" className="w-full" onClick={onContinue}>
-          {isLast ? "Dokončit lekci" : "Pokračovat"}
+      {showAskAi && (
+        <Button
+          variant="outline"
+          size="lg"
+          className="w-full"
+          onClick={onAskAi}
+        >
+          <Sparkles className="size-4" />
+          Chci to dovysvětlit
         </Button>
-      </div>
+      )}
     </div>
   );
 }
