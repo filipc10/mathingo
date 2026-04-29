@@ -7,6 +7,9 @@ export type CurrentUser = {
   first_name: string;
   display_name: string;
   daily_xp_goal: number;
+  streak: number;
+  xp_today: number;
+  last_activity_date: string | null;
 };
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
