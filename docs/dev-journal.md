@@ -628,3 +628,193 @@ end-to-end frontend flow — ověřuje uživatel ve své prohlížečce.
 - Resend integrace prošla bez bumps — DNS verifikace domény + API
   klíč v `.env` stačily. Moment, kdy email reálně dorazí, je něco,
   co testovací mock nezprostředkuje.
+
+---
+
+## Session 006 — 2026-04-29 — Design system rollout
+
+- **Prompt ID:** #6
+- **Iterací plánu:** 1 (plán schválen napoprvé s drobnými dodatky:
+  whitespace na landingu, menší čísla na PathStone, visual check
+  kromě curl smoke)
+- **Uživatelských zpráv v session:** 3 (prompt + plán schválení + finální review)
+- **Commity v session:** 7 plánovaných + 1 fix commit = **8**
+
+### Cíl
+Z defaultního Tailwind/shadcn templatu udělat konzistentní Duolingo-
+inspired design system: Nunito font, primary modrá `#0073FF`, akcent
+zelená `#22C55E`, 14 px border radius, polish všech 5 existujících
+obrazovek. Žádné funkční změny, žádný backend touch, žádný dark mode.
+
+### Co fungovalo na první pokus
+- Replace `globals.css` připraveným obsahem + drobná adaptace
+  `@plugin "tailwindcss-animate"` → `@import "tw-animate-css"`
+  (už nainstalovaný shadcn v sesssion 005). Žádný nový dep.
+- Replace fontů v `layout.tsx`: Geist/Geist_Mono → Nunito s vahami
+  400/600/700/800/900 přes `next/font/google`. `latin-ext` subset
+  pokrývá českou diakritiku.
+- shadcn primitivy (button, input, card) — manuální edit base
+  class strings (font-bold, h-11, shadow-sm), ne `npx shadcn add`
+  (které by přepsalo prompt-#5 fixy).
+- Card-style XP radio v onboardingu přes Tailwind `has-[[data-checked]]:`
+  selector — bez React state, čistě CSS, label wrapping
+  RadioGroupItem.
+- PathStone komponent + 7 kamenů s offsety `[0, +56, +80, +56, 0,
+  -56, -80]` — sinusoidální vlna, layout flexbox column +
+  `transform: translateX(...)` per stone.
+- next/font/google self-hosting Nunito woff2 (preloaded) + body
+  class `nunito_*-module__*__variable` ze stránek HTML inspect.
+- Favicon `app/icon.svg` (32×32 SVG) + OG image `app/opengraph-
+  image.tsx` přes built-in `next/og` `ImageResponse` — žádný nový
+  dep, vše Next 15 conventions.
+
+### Co bylo potřeba opravit
+
+#### Bug: OG image URL zaháknuté na `localhost:3000` (commit `4f356c6`)
+
+Po commitu 7 měl rendered HTML `og:image` URL ve formě
+`http://localhost:3000/opengraph-image?...`. Crawler (Twitter, Slack
+preview) by stáhl localhost a selhal.
+
+**Příčina:** Next 15 počítá absolutní OG URL podle `metadataBase`
+v root metadata. Když není nastavený, defaultuje na request URL —
+ale při statické pre-rendering build fázi je „request URL" interní
+listen address (`http://localhost:3000`).
+
+**Fix:** v `layout.tsx`:
+```tsx
+metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://mathingo.cz"),
+```
+
+Po fixu HTML correctly emits
+`<meta property="og:image" content="https://mathingo.cz/opengraph-image?..."/>`.
+
+**Lekce:** každá nová stránka s metadata, která produkuje absolutní
+URL (OG image, canonical link, sitemap), potřebuje `metadataBase`
+v root. Buďto hardcoded, nebo z env. Default behavior Next.js to
+neflagne errorem — jen tiše použije localhost.
+
+### Rozhodnutí, která stojí za zaznamenání
+
+- **`tw-animate-css` místo `tailwindcss-animate`** — provided
+  globals.css měl `@plugin "tailwindcss-animate"`, ale shadcn 4.x
+  nainstaloval `tw-animate-css` (jiný balíček, stejné utility
+  classes). Adaptoval jsem o jeden řádek na `@import "tw-animate-
+  css"`. Žádný nový dep, žádné side-effecty (`animate-in`, `fade-in`,
+  `slide-in-*` jsou identické).
+- **Nunito** (Google Fonts free, Duolingo-like rounded geometric)
+  s vahami 400/600/700/800/900 přes `next/font/google`. Self-hosting
+  + `display: "swap"` (text se vyrendruje s fallback fontem ihned,
+  Nunito doplní jakmile dorazí). `latin-ext` subset pro českou
+  diakritiku — bez něj by `Mathingo` rendrovalo, ale `přihlas`
+  by visel na fallback glyphs.
+- **oklch color space** — moderní, perceptually uniform; primary
+  `oklch(0.59 0.22 252)` ≈ `#0073FF`. Tailwind 4 podporuje
+  natively, browsers (Chrome 111+, Safari 15.4+, Firefox 113+)
+  taky.
+- **Card-style radio** přes `has-[[data-checked]]:` Tailwind
+  selector místo klasického malého radio circle. Lepší UX
+  (větší klikatelná plocha, jasná visual selection), bez extra
+  React state — celá selection logika je v CSS přes Base UI's
+  `data-checked` attribute. Pure CSS přístup je robustní (žádný
+  re-render, žádný controlled-component plumbing).
+- **CardTitle stays `<div>`** v shadcn primitivu, sémantická
+  heading hierarchie patří per-instance do consumer kódu (per
+  user decision z plánu). Globální `h1-h4` styly v `@layer base`
+  se aplikují na semantic h-tags v page komponentách.
+- **No framer-motion** — Tailwind `animate-in fade-in slide-in-
+  from-bottom-2 duration-500` na landing hero + `transition-
+  transform hover:scale-110` na PathStone + Loader2 spinning
+  icon. Stačí pro MVP polish, žádný nový dep.
+- **PathStone `cursor-not-allowed` + `disabled`** na locked
+  state — visually i sémanticky nezklikatelné. Available state
+  klikatelný ale nikam nevede (pro tuto session jen vizuální
+  prototyp; navigace přijde s implementací cvičení).
+- **Top bar v `/learn` inline (ne extrakce)** — jediný consumer.
+  Refactor až s druhým use case (např. profile page v dalším
+  promptu).
+
+### Out of scope této session
+- **Dark mode** — vědomě vynechán. Zdvojil by visual QA práci a
+  thesis komise to nevyžaduje. Tokens v `globals.css` jsou jen
+  light; `.dark` selector dropnut.
+- **Reálná data v top baru** — streak `🔥 0 dní` a XP `0 / N XP`
+  jsou hardcoded placeholders. Backend endpointy pro streak/XP
+  ještě neexistují, refactor top baru na komponentu se stane,
+  až přijdou (next session).
+- **Reálná navigace v `/learn` path** — kameny jsou jen vizuální
+  prototypy; available stone klikne, ale nikam nenaviguje. Lesson
+  runtime + routing v dalším promptu.
+- **Tests** — pokračuje DoD deviation z prompt #5 (auth tests
+  deferred). Visual diff testy (Chromatic / Percy) by byly pro
+  thesis overkill.
+
+### Použité verze (přírůstky)
+
+| Komponenta | Verze |
+|---|---|
+| Nunito (Google Fonts) | weights 400/600/700/800/900, latin + latin-ext |
+| Tailwind CSS | 4.x (z prompt #2) |
+| tw-animate-css | 1.4.0 (z prompt #5) |
+| oklch color space | natively v Tailwind 4 |
+
+### Verifikační výstupy
+
+**Smoke (HTTP status):**
+```
+/                         → 200
+/signin                   → 200
+/check-email              → 200
+/onboarding (anon)        → 307 → /signin
+/learn (anon)             → 307 → /signin
+/auth/verify (no token)   → 302 → /signin?error=invalid_or_expired
+/icon.svg                 → 200
+/opengraph-image          → 200 (PNG)
+POST /api/auth/signin     → 200 (auth flow nedoznal regrese)
+```
+
+**Inspekce HTML root stránky:**
+- `<html lang="cs" className="nunito_…__variable">` — Nunito CSS
+  variable applied ✓
+- `<link rel="preload" .../>` na woff2 fontů ✓
+- `<meta property="og:image" content="https://mathingo.cz/
+  opengraph-image?…">` — absolute URL ✓
+- `<link rel="icon" href="/icon.svg?…" type="image/svg+xml">` ✓
+- Button rendering: `bg-primary text-primary-foreground … h-11
+  gap-2 px-8 text-lg font-bold rounded-lg` ✓ (new design tokens
+  applied)
+
+**Visual check** (prováděn manuálně mimo Claude Code session — GUI
+prohlížeč není v exekuční prostředí dostupný):
+- Provedeno nahrubo přes HTML/CSS inspect: žádný overflow, žádné
+  missing tokens, žádný z bývalých Geist font referencí v nové
+  HTML.
+- Screenshot mobile + desktop viewportů + visual review obou je
+  na uživateli (nemožné z této session).
+
+### Dojem
+
+- 7 plánovaných commitů + 1 fix = 8. Pouze jeden bump (metadataBase),
+  což je nejméně bumpů v session od scaffold. Design polish je
+  méně cross-vrstvový než auth flow — typografie / barvy /
+  layout všechno hraje na jedné vrstvě (frontend Tailwind + JSX),
+  takže méně integration gotchas.
+- Adaptace `@plugin tailwindcss-animate` → `@import tw-animate-
+  css` je *přesně* ten typ rozhodnutí, kde provided CSS od
+  uživatele obsahuje hint na nový balíček, ale aktuální projekt
+  má alternativu. Místo slepého paste je lepší adaptovat.
+- `has-[[data-checked]]:` Tailwind selector pro card-style radio
+  je elegantní — pure CSS, žádný React state plumbing.
+  Standardní React tutorial by ti řekl "use useState + onChange",
+  ale Base UI emits `data-checked` jako side effect, takže CSS
+  to pickne free.
+- `metadataBase` bug: `next/og` ImageResponse je hezký, ale
+  bez explicitního `metadataBase` se OG URL stane localhost. Až
+  bude site shared on Twitter/Slack v 1-2 dnech, je dobré, že
+  to bylo zachyceno před launchem.
+- Pro thesis writeup: design polish session je dobrý kontrast
+  vůči auth/db sessionám — vizuální / typografická rozhodnutí
+  vedle technical/security. Kapitola 6 (vibe coding workflow)
+  získá pohled, jak se Claude Code chová s "fluffy" task: méně
+  konkrétních specifikací, více estetických rozhodnutí, ale
+  stejná struktura plán → execution → review.
