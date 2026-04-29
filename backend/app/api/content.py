@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +11,22 @@ from app.models import Course, Lesson, Section
 from app.schemas.content import CourseResponse, CourseStructure, LessonDetail
 
 router = APIRouter(tags=["content"])
+
+
+def sanitize_exercise_payload(
+    exercise_type: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Strip answer-revealing fields before exposing an exercise to the client.
+
+    Multiple-choice answers (correct_index) and numeric answers (expected,
+    tolerance) are evaluated server-side at submit time; the client only
+    receives what's needed to render the question.
+    """
+    if exercise_type == "multiple_choice":
+        return {"options": payload.get("options", [])}
+    if exercise_type == "numeric":
+        return {}
+    return payload
 
 
 async def _load_course(
@@ -70,4 +87,27 @@ async def get_lesson(
     lesson = (await db.execute(stmt)).scalar_one_or_none()
     if lesson is None:
         raise HTTPException(status_code=404, detail="lesson_not_found")
-    return LessonDetail.model_validate(lesson)
+
+    return LessonDetail.model_validate(
+        {
+            "id": lesson.id,
+            "order_index": lesson.order_index,
+            "title": lesson.title,
+            "description": lesson.description,
+            "xp_reward": lesson.xp_reward,
+            "exercises": [
+                {
+                    "id": ex.id,
+                    "order_index": ex.order_index,
+                    "exercise_type": ex.exercise_type,
+                    "prompt": ex.prompt,
+                    "explanation": ex.explanation,
+                    "difficulty": ex.difficulty,
+                    "payload": sanitize_exercise_payload(
+                        ex.exercise_type, ex.payload
+                    ),
+                }
+                for ex in lesson.exercises
+            ],
+        }
+    )
