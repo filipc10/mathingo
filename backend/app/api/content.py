@@ -8,8 +8,9 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_db
 from app.dependencies import get_current_user
-from app.models import Course, Exercise, Lesson, Section, User
+from app.models import Course, Exercise, Lesson, LessonAttempt, Section, User
 from app.schemas.content import (
+    CourseProgressResponse,
     CourseResponse,
     CourseStructure,
     ExerciseResult,
@@ -81,6 +82,38 @@ async def get_course_structure(
 ) -> CourseStructure:
     course = await _load_course(course_id_or_code, db, with_structure=True)
     return CourseStructure.model_validate(course)
+
+
+@router.get(
+    "/courses/{course_id_or_code}/progress",
+    response_model=CourseProgressResponse,
+)
+async def get_course_progress(
+    course_id_or_code: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CourseProgressResponse:
+    course = await _load_course(course_id_or_code, db)
+
+    # SELECT DISTINCT lesson_id FROM lesson_attempts WHERE user_id = me
+    #   AND is_completed = true
+    #   AND lesson_id IN (lessons of this course via section join)
+    stmt = (
+        select(LessonAttempt.lesson_id)
+        .join(Lesson, Lesson.id == LessonAttempt.lesson_id)
+        .join(Section, Section.id == Lesson.section_id)
+        .where(LessonAttempt.user_id == current_user.id)
+        .where(LessonAttempt.is_completed.is_(True))
+        .where(Section.course_id == course.id)
+        .distinct()
+    )
+    result = await db.execute(stmt)
+    completed_lesson_ids = [row[0] for row in result.all()]
+
+    return CourseProgressResponse(
+        course_id=course.id,
+        completed_lesson_ids=completed_lesson_ids,
+    )
 
 
 @router.get("/lessons/{lesson_id}", response_model=LessonDetail)

@@ -103,3 +103,20 @@ class SubmissionResponse(BaseModel):
     lesson_id: UUID
     results: list[ExerciseResult]
     score: ScoreSummary
+    progress: "ProgressInfo"
+
+
+class ProgressInfo(BaseModel):
+    is_completed: bool       # this attempt scored ≥ 80%
+    xp_earned: int           # awarded only on first completion
+    user_streak: int         # current_length after this submit
+    user_xp_today: int       # today's accumulated XP after this submit
+
+
+class CourseProgressResponse(BaseModel):
+    course_id: UUID
+    completed_lesson_ids: list[UUID]
+
+
+# Resolve the forward-ref for SubmissionResponse.progress
+SubmissionResponse.model_rebuild()
