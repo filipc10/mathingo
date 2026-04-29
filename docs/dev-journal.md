@@ -1951,3 +1951,199 @@ regex split + JSX. ~30 řádků navíc oproti session 011 implementaci.
 - Bold před italic je důležité ordering decision — opačně by
   `**slovo**` zmatchovalo italic regex jako `*slovo*` se zbytkovým
   `*` na okrajích. Bold first kill tuhle ambiguity.
+
+---
+
+## Session 013 — 2026-04-29 — Leaderboard (poslední core fíčura MVP)
+
+- **Prompt ID:** #13 (mega-session, ~7 commitů)
+- **Iterací plánu:** 1 (plán schválen napoprvé, jeden bod ke korekci
+  v plánu odhalil bug v briefu — viz „URL routing")
+- **Uživatelských zpráv v session:** 2 (prompt + plán schválení)
+- **Commity v session:** **8** (7 plánovaných + 1 docs)
+
+### Cíl
+
+Přidat poslední fíčuru do MVP scope dle thesis kapitoly 1 (Duolingo
+gamifikace): **leaderboard** s týdenním a all-time XP žebříčkem,
+vlastním rankem mimo Top 10, deterministickými avatary a 9 mock
+českými uživateli pro vizuální plnost.
+
+### Vlastní inženýrské rozhodnutí proti briefu
+
+#### Mock data: migrace **plus** refresh script
+
+Brief navrhoval celou seed včetně daily_activities v jediné migraci.
+**Problém:** weekly XP je time-relative (`WHERE activity_date >=
+start_of_week`). Hodnoty zapečené do migrace by tichne vypadly
+z filteru po jednom kalendářním týdnu. Druhé spuštění `alembic
+upgrade head` nezopakuje migraci (alembic version table), takže
+mock data by se postupně rozplynula.
+
+Řešení: **rozdělit na dvě části.**
+
+1. Migrace `7e2f1a9c8d4b_seed_mock_leaderboard_users` — vytvoří
+   users + streaks. Time-stable, idempotentní přes ON CONFLICT
+   DO NOTHING.
+2. Script `backend/scripts/refresh_mock_xp.py` — distribuuje
+   weekly XP na current week. Idempotentní přes
+   `ON CONFLICT (user_id, activity_date) DO UPDATE`. Spouští
+   se před každým thesis demo:
+   ```
+   docker compose exec backend python -m scripts.refresh_mock_xp
+   ```
+
+**Výsledek:** mock users existují trvale, weekly XP se obnovuje
+out-of-band. Migrace zůstává čistá (žádná time-relative data),
+script je krátký, jasný a explicit — odpovídá thesis-demo workflow.
+
+#### URL routing — bug v briefu
+
+Brief navrhoval `app.include_router(leaderboard.router,
+prefix="/api")`. Jenže nginx config už dělá `/api/* → backend /*`
+rewrite (viz `infra/nginx/sites/mathingo.conf`):
+```
+location /api/ {
+    proxy_pass http://backend:8000/;
+}
+```
+
+Backend by tedy mountnul na `/api/leaderboard/`, browser by hitnul
+`/api/leaderboard/...`, nginx by ale strippnul `/api/` a poslal na
+backend `/leaderboard/...` → 404. Stejně jako ostatní routery
+(`/courses`, `/exercises`) je správně mountnout na **`/leaderboard`
+bez `/api`**, browser hitne `/api/leaderboard/...` a nginx ho
+namapuje. ✓
+
+#### user_rank fallback semantika
+
+Když má current_user **nulové XP v období** (nikdy neudělal lekci
+v tomto týdnu), můj smyčka přes všechny řádky ho **nenajde** —
+filtruji `xp_subq.c.xp > 0` aby leaderboard nezahrnoval nulové
+hráče. V tom případě `user_rank` zůstane null a frontend skryje
+„Tvoje pozice" box. Acceptable degradation: zpráva „buď první!"
+implikuje, že uživatel není na žebříčku, dokud neudělá lekci.
+
+Alternativa by byla synthetic entry „Tvoje pozice: poslední
+(0 XP)" — přidávalo by zbytečnou logiku pro edge case s
+nulovou pedagogickou hodnotou.
+
+### Architektura
+
+#### Backend
+
+Single helper `_build_leaderboard(since=...)` pokrývá oba
+endpointy. `since=None` = all-time, `since=week_start` = weekly.
+Subquery aggreguje `daily_activities.xp_earned`, joinuje users,
+outerjoinuje streaks (user nemusí mít streak row).
+
+Ordering: `xp DESC, COALESCE(streak, 0) DESC, users.created_at ASC`.
+Tertiary tie-breaker je deterministický — bez něj by dva tied
+users mohli random měnit pořadí mezi dvěma requesty.
+
+Pro thesis-tier traffic (~50 users) materializuji celý ordered
+list a vyhrabu top 10 + own rank v Pythonu. Window function
+(`ROW_NUMBER() OVER (...)` + filter) by byla idiomatic Postgres,
+ale unnecessary komplexita pro N=50.
+
+#### Frontend
+
+`/leaderboard/page.tsx` (server component) — pre-fetch weekly
+data server-side, pass jako prop do client komponenty. Total
+tab fetchne lazy on first click (most users konzultují weekly
+častěji).
+
+`leaderboard-client.tsx` — Tabs primitive z `@base-ui/react`,
+list rendrovaný s rank badge (🥇🥈🥉 pro top 3, jinak `${rank}.`),
+boring-avatar generovaný z display_name (deterministic),
+modrý border highlight pro current user.
+
+#### Avatary
+
+`boring-avatars` lib (~9KB), variant `beam`, custom paleta
+match s app primary/accent barvami. Single wrapper komponent
+`UserAvatar` aby se barvy nemusely opakovat v každém call site.
+
+### Závislosti
+
+| package | verze | důvod |
+|---|---|---|
+| boring-avatars | ^2.0.4 | Deterministic SVG avatary z user name |
+
+Žádné jiné nové deps. `Tabs` primitive postavený nad
+existujícím `@base-ui/react`. `Trophy` ikona z existujícího
+`lucide-react`.
+
+### Schema změny
+
+Nové řádky v `users`, `streaks` (žádné nové tabulky):
+
+```sql
+SELECT email, display_name FROM users WHERE email LIKE 'mock+%';
+-- 9 rows: pavel-vse, karel-mat, marie-bp, tomas24, anna-dy,
+--        luki-mt, petra-vse, honza-mat, jana-st
+```
+
+Po `python -m scripts.refresh_mock_xp`:
+
+```sql
+SELECT u.display_name, da.xp_earned
+FROM users u JOIN daily_activities da ON da.user_id = u.id
+WHERE u.email LIKE 'mock+%';
+-- 9 rows, xp_earned 180/150/120/95/80/65/50/30/15
+```
+
+### Verifikace
+
+```bash
+# 401 bez auth
+$ curl -k -o /dev/null -w "%{http_code}" \
+       https://mathingo.cz/api/leaderboard/weekly
+401
+
+# /weekly s auth (synthetic JWT) — 9 entries, top is pavel-vse 180 XP
+# /total identical (žádný čas-filter, all data je z this week)
+```
+
+### Out of scope
+
+- **Persistence chat/lesson hover stats** — leaderboard ukazuje jen
+  XP a streak, žádné per-user breakdown
+- **Pagination** — Top 10 fixed, „celý seznam" view není v MVP scope
+- **Search** — žádné vyhledávání uživatele podle jména
+- **Friends only filter** — žádný social graph v aplikaci
+- **Per-month / per-day buckety** — jen weekly + total
+- **Mock users magic-link sign-in** — záměrně blokováno emailovou
+  doménou `@mathingo.local` která neexistuje
+
+### Vědomé rozhodnutí pro thesis demo
+
+Mock users jsou **v produkční DB.** Komise to při code review uvidí
+a měla by to chápat jako designovaný stav pro vizuální demo, ne
+bug. Adresy `@mathingo.local` jsou self-documenting — kdokoli
+v code review okamžitě vidí, že to nejsou reálné účty. Nevyplňují
+auth flow, nemají magic-link tokens, jejich stats jsou předvyplněné.
+Je to ekvivalent fixture data v testech, jen v produkčním
+environmentu pro thesis prezentaci.
+
+### Dojem
+
+- 8 commitů za jednu session, plán-první workflow + auto-mode
+  execution kombinace funguje. Plán fáze odhalila routing bug
+  v briefu (`/api` prefix kolize) **před** kódováním —
+  ušetřilo ~15 min troubleshooting.
+- Dvojfázová mock data strategie (migrace + refresh script) je
+  drobnost, ale ukazuje pochopení **time-relative invarianty**.
+  Naivní brief implementace by fungovala přesně 1 týden; potom
+  by se diagnostikoval „leaderboard prázdný" bug místo aby se
+  uvědomilo, že designovaná data vypadla z filteru.
+- Tag union state v leaderboard-client (`weekly | total`) +
+  lazy loading total tabu je drobné UX zlepšení nad „eager
+  fetch obojího". Většina návštěv jen čte weekly; total tab
+  netřeba předem zatěžovat.
+- Boring-avatars je delightful library. 9KB bundle, deterministic
+  output, no server roundtrip. Přesně typ závislosti, která má
+  smysl — nereplicable z 30 řádků kódu, malá, fokusovaná.
+- Final MVP feature complete: lesson runner ✓, AI chat ✓,
+  markdown rendering ✓, leaderboard ✓. Aplikace má kompletní
+  Duolingo-style gamification scope dle thesis kapitoly 1.
