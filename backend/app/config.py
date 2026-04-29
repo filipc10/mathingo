@@ -23,5 +23,13 @@ class Settings(BaseSettings):
     # Public application URL — used in magic link emails as the base for /auth/verify
     app_url: str = "https://mathingo.cz"
 
+    # Anthropic Claude API — used by the per-exercise AI explanation chat.
+    # User specified `claude-sonnet-4-7` which doesn't exist; using the latest
+    # Sonnet (4.6). Override via env var to swap models without code changes.
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-6"
+    chat_daily_message_limit: int = 20
+    chat_session_message_limit: int = 5
+
 
 settings = Settings()
