@@ -25,6 +25,7 @@ class User(IDMixin, TimestampMixin, Base):
     email: Mapped[str] = mapped_column(
         String(320), unique=True, nullable=False, index=True
     )
+    first_name: Mapped[str] = mapped_column(String(40), nullable=False, default="")
     display_name: Mapped[str] = mapped_column(String(40), nullable=False)
     daily_xp_goal: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("20")
