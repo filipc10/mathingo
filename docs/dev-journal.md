@@ -2332,3 +2332,185 @@ Po této session je MVP **production-ready** pro thesis demo:
 - ✅ Sticky mobile button
 - ✅ Empty answer disabled state
 - ✅ Git sync VPS ↔ GitHub
+
+---
+
+## Session 015 — 2026-04-29 — Profile backend foundations
+
+- **Prompt ID:** #15
+- **Iterací plánu:** 1 (plán schválen napoprvé, tři drobné parametry —
+  `answer` zůstává místo přejmenování, smoke test ano, separate queries)
+- **Uživatelských zpráv v session:** 2 (prompt + plán schválení)
+- **Commity v session:** **8** (7 backend + 1 docs)
+
+### Cíl
+
+Backend infrastructure pro upcoming /profile page (sessions #16-17).
+Žádné UI změny — jen DB schema, persistence, statistiky API, avatar
+field a /users/me endpoint pro self-service profile editaci.
+
+### Co fungovalo na první pokus
+
+- 8 commitů v plánovaném pořadí, bez nutných returns/refactorů.
+- Avatar migration (commit 1) — tříkrokový vzor (add s server_default →
+  drop server_default → add check constraint) najel napoprvé.
+- Submit endpoint atomicity — jednou flushed `lesson_attempt` poskytl
+  PK pro `exercise_attempts.lesson_attempt_id`, bulk insert prošel
+  v stejné transakci, race-IntegrityError fallback path beze změny.
+- Stats endpoint (9 separate queries) vrátil správné agregace na první
+  vystavení po submit lesson 1 — `total_xp=10, lessons_completed=1,
+  total_exercise_attempts=3, by_type=[mc:2/2, num:1/1]`.
+- PATCH /users/me uniqueness check — třístavová verifikace prošla
+  (avatar update 200, kolizní display_name 409, vlastní display_name 200).
+- Mock users avatars — 9 distinct kombinací aplikováno přes
+  string-templated UPDATE statementy (bezpečné, hodnoty jsou hardcoded
+  ne user input).
+
+### Co bylo potřeba opravit
+
+1. **`UPDATE...FROM` s self-reference v JOIN — commit 2 migrace.**
+   Postgres odmítá referenci na cílovou tabulku v `FROM` klauzuli
+   `UPDATE` — `JOIN exercises e ON e.id = ea.exercise_id` failed s
+   `invalid reference to FROM-clause entry for table "ea"`. Oprava:
+   restrukturovat na comma-style `FROM lesson_attempts la, lessons l,
+   exercises e` a přesunout všechny join podmínky do `WHERE`.
+   Alembic transakce rollbackla partial migration čistě, takže žádné
+   manuální řešení nebylo potřeba.
+   **Lekce:** Postgres `UPDATE...FROM` má jiná pravidla než `SELECT`.
+   Cílová tabulka je implicitně leading; její atributy se referencují
+   z WHERE, ne z dalších JOIN.
+
+2. **Test event-loop binding — pytest-asyncio + global engine.**
+   První test (zero-state) prošel, druhý (happy path) padl s
+   `RuntimeError: Event loop is closed` během asyncpg cleanup. Příčina:
+   `app.db.engine` je modulový singleton vytvořený s první event
+   loop; pytest-asyncio dává každému testu fresh loop, ale connection
+   pool drží reference na starý loop a teardown padá. Oprava: per-test
+   engine v `db_session` fixture, monkey-patch `app.db.AsyncSessionLocal`
+   pro dobu testu aby `get_db` přes dependency override používal
+   stejný engine. `await engine.dispose()` v finally cleanup.
+   **Lekce:** modulové async singletons (engines, http klienti)
+   nejdou cleanly s pytest-asyncio function-scoped loops. Per-test
+   fresh engine je safest default.
+
+3. **Backend kontejner běžel production target bez pytest.**
+   První `pytest` run hlásil `ModuleNotFoundError: No module named
+   'pytest'`. Stack je deployed s `target: runner` (bez `--no-dev` →
+   pardon, s `--no-dev`), takže dev dependencies nejsou v image.
+   Oprava: build dev target ad-hoc (`docker build --target dev -t
+   mathingo-backend-dev backend/`) a spustit testy v jednorázovém
+   kontejneru přes mathingo network. To stejné funguje i v CI.
+
+### Rozhodnutí, která stojí za zaznamenání
+
+- **Denormalizace v exercise_attempts.** Per-typ / per-section / per-lesson
+  agregace by jinak musely joinovat exercise_attempts → lesson_attempts
+  → lessons → sections → exercises na každý read. Denormalizace přidává
+  4 sloupce (`user_id`, `exercise_type`, `section_id`, `lesson_id`)
+  + 3 composite indexy a redukuje stats query na čistě indexované scany.
+  Trade-off: source of truth zůstává v `exercises.exercise_type`,
+  `lessons.section_id` — denormalizované hodnoty se píší jen při
+  insertu attempts. Pokud by se v budoucnu re-organizovala kurzová
+  struktura (lesson → jiná section), denormalizovaná data by mohla
+  zastarat. Pro MVP, kde course content je seeded přes migrace
+  a statický, není to riziko.
+
+- **Stats: separate queries místo one-big-CTE.** Pro thesis-tier scope
+  (1 user, ~30 attempts) je rozdíl v latency neměřitelný. Více malých
+  queries čte se snadněji a debuguje samostatně. Pokud by se MVP škáloval
+  na thousands users, materializované views nebo cached aggregates
+  by byly další iterací.
+
+- **Sections always included v stats response.** I sekce bez attempts
+  se vrací jako zero-stat objekt. Akademicky cennější — uživatel vidí
+  full roadmap, ne jen touched parts. Frontend pak rozhoduje co render.
+
+- **`time_spent_ms` zůstává nullable.** Frontend MVP neměří per-exercise
+  čas. Sloupec připraven pro future instrumentation, ale neforced.
+
+- **Avatar fields s server_default → drop default → check constraint.**
+  Server default backfilluje existing rows; drop defaults zaručí, že
+  future inserts musí explicitně specifikovat hodnotu (onboarding form
+  je jediný legit zdroj). Check constraint na DB úrovni jako defense-
+  in-depth proti špatně-validovanému API call.
+
+- **Bootstrapped pytest infra místo skip.** Project Definition of Done
+  vyžaduje "covered by at least one automated test". Stats endpoint
+  je netrivální (~9 SQL agregací, dvě branche: zero-state vs happy
+  path), takže smoke test má hodnotu. Investice ~30 minut do
+  conftest.py vytvořila šablonu pro budoucí backend testy.
+
+### Verifikace na produkci
+
+```
+$ curl …/api/auth/me
+{"avatar_variant":"marble","avatar_palette":"green",…}
+
+$ curl …/api/users/me/stats
+total_xp: 10, lessons_completed: 1, total_exercise_attempts: 3,
+overall_winrate: 1.0
+by_type: [mc: 2/2 (1.0), num: 1/1 (1.0)]
+first lesson: attempted=3, total_attempts=3, best_score=1.0,
+              is_completed=true
+
+$ docker compose exec postgres psql … -c "SELECT exercise_type,
+  is_correct, COUNT(*) FROM exercise_attempts WHERE user_id=… GROUP
+  BY exercise_type, is_correct;"
+multiple_choice | t | 2
+numeric         | t | 1
+```
+
+Mock users avatars distribution (9 distinct kombinací):
+```
+anna-dy   | ring    | purple
+honza-mat | pixel   | green
+jana-st   | beam    | mono
+karel-mat | pixel   | purple
+luki-mt   | bauhaus | mono
+marie-bp  | beam    | sunset
+pavel-vse | marble  | green
+petra-vse | marble  | blue
+tomas24   | sunset  | blue
+```
+
+Pytest smoke (uvnitř dev image):
+```
+tests/test_users_stats.py::test_stats_zero_state_returns_full_roadmap PASSED
+tests/test_users_stats.py::test_stats_happy_path_after_submit          PASSED
+2 passed in 1.81s
+```
+
+### Out of scope
+
+- **Frontend** — všechno frontend pro /profile přijde v sessions #16-17.
+- **Avatar v leaderboard response** — odložené, vyžaduje frontend
+  consumption.
+- **Per-exercise timing** — nullable column připraven, frontend MVP
+  neposílá.
+- **Materialized views pro stats** — premature pro thesis scope.
+
+### Dojem
+
+- Backend-only session se hodí udělat **před** frontend prací — schema
+  + endpointy stable před tím, než UI začne consumovat. Jinak by se
+  stats response shape měnila s každou frontend iterací.
+- Denormalizace v exercise_attempts byla nejvíc value-per-line změna.
+  Bez ní by stats endpoint byl 4-table-join na každý read, s ní jsou
+  to indexované GROUP BY na composite indexu.
+- Dev/prod target split v Dockerfile (no pytest v runner) přidal jeden
+  skip-step na verifikaci, ale je to správný separation. Production
+  image nepotřebuje testovací deps.
+- Granularita 8 commitů per spec dodržena. Každý commit standalone
+  bezpečný (žádný "WIP" v historii). To má hodnotu pro `git bisect`
+  pokud by někdy byla potřeba.
+
+### Status
+
+Po této session je backend ready pro session #16 (avatar selection
+v onboarding + UI komponenta) a session #17 (/profile page s
+drilldown statistik). Frontend bude pouze konzumovat existující
+endpointy:
+- `GET /users/me/stats` pro stats UI
+- `PATCH /users/me` pro profile editaci
+- `POST /onboarding` (rozšířený) pro avatar selection
+- `GET /auth/me` (rozšířený) pro top-bar avatar render
