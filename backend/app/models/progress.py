@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    String,
     UniqueConstraint,
     text,
 )
@@ -131,6 +132,11 @@ class LessonAttempt(IDMixin, Base):
 
 class ExerciseAttempt(IDMixin, Base):
     __tablename__ = "exercise_attempts"
+    __table_args__ = (
+        Index("ix_exercise_attempts_user_created", "user_id", "created_at"),
+        Index("ix_exercise_attempts_user_section", "user_id", "section_id"),
+        Index("ix_exercise_attempts_user_type", "user_id", "exercise_type"),
+    )
 
     lesson_attempt_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -144,9 +150,25 @@ class ExerciseAttempt(IDMixin, Base):
         nullable=False,
         index=True,
     )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    exercise_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    section_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sections.id"),
+        nullable=False,
+    )
+    lesson_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("lessons.id"),
+        nullable=False,
+    )
     answer: Mapped[dict] = mapped_column(JSONB, nullable=False)
     is_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    time_spent_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    time_spent_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
