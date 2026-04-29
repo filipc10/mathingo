@@ -21,11 +21,13 @@ export default async function OnboardingPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-white px-6 py-12 dark:bg-neutral-950">
-      <Card className="w-full max-w-md">
+    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
+      <Card className="w-full max-w-lg">
         <CardHeader>
-          <CardTitle>Vítej v Mathingo</CardTitle>
-          <CardDescription>
+          <CardTitle className="text-3xl font-extrabold tracking-tight">
+            Vítej v Mathingo
+          </CardTitle>
+          <CardDescription className="text-base">
             Pověz nám něco o sobě, ať můžeme nastavit cestu lekcemi.
           </CardDescription>
         </CardHeader>
