@@ -10,6 +10,7 @@ from sqlalchemy.sql import func
 from app.models.base import Base, IDMixin, TimestampMixin
 
 if TYPE_CHECKING:
+    from app.models.chat import ChatUsage
     from app.models.content import Course
     from app.models.progress import (
         DailyActivity,
@@ -55,6 +56,11 @@ class User(IDMixin, TimestampMixin, Base):
         passive_deletes=True,
     )
     daily_activities: Mapped[list["DailyActivity"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    chat_usage: Mapped[list["ChatUsage"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

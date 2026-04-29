@@ -1,5 +1,6 @@
 from app.models.auth import MagicLinkToken, User
 from app.models.base import Base, IDMixin, TimestampMixin
+from app.models.chat import ChatUsage
 from app.models.content import Course, Exercise, ExerciseType, Lesson, Section
 from app.models.progress import (
     DailyActivity,
@@ -27,4 +28,5 @@ __all__ = [
     "ExerciseAttempt",
     "Streak",
     "DailyActivity",
+    "ChatUsage",
 ]
