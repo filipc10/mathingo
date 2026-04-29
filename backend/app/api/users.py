@@ -8,7 +8,7 @@ because they're feature endpoints, not auth state.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -25,9 +25,55 @@ from app.models import (
     Streak,
     User,
 )
-from app.schemas.user import LessonStats, SectionStats, TypeStats, UserStats
+from app.schemas.user import (
+    LessonStats,
+    SectionStats,
+    TypeStats,
+    UserStats,
+    UserUpdateRequest,
+    UserUpdateResponse,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+@router.patch("/me", response_model=UserUpdateResponse)
+async def update_me(
+    payload: UserUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserUpdateResponse:
+    """Update display_name and/or avatar fields.
+
+    Uniqueness check on display_name only fires when the value actually
+    changes — re-submitting the same display_name (e.g. user only edits
+    avatar) must not 409. Pydantic literals validate avatar_variant /
+    avatar_palette before we get here.
+    """
+    if (
+        payload.display_name is not None
+        and payload.display_name != current_user.display_name
+    ):
+        collision = await db.execute(
+            select(User).where(
+                User.display_name == payload.display_name,
+                User.id != current_user.id,
+            )
+        )
+        if collision.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="display_name_taken",
+            )
+        current_user.display_name = payload.display_name
+
+    if payload.avatar_variant is not None:
+        current_user.avatar_variant = payload.avatar_variant
+    if payload.avatar_palette is not None:
+        current_user.avatar_palette = payload.avatar_palette
+
+    await db.commit()
+    return UserUpdateResponse(status="ok")
 
 
 @router.get("/me/stats", response_model=UserStats)
