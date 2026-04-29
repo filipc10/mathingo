@@ -11,6 +11,7 @@ import {
   type MultipleChoicePayload,
 } from "@/components/exercise/multiple-choice-exercise";
 import { NumericExercise } from "@/components/exercise/numeric-exercise";
+import { ResultScreen } from "@/components/exercise/result-screen";
 
 import {
   type AnswerSubmission,
@@ -78,19 +79,7 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
   }
 
   if (phase === "submitted" && result) {
-    return (
-      <div className="mx-auto max-w-xl px-6 py-12 text-center">
-        <h1 className="mb-4">
-          {result.score.correct_count} / {result.score.total_count}
-        </h1>
-        <p className="mb-8 text-muted-foreground">
-          Dotazy jsou vyhodnocené. (Detailní rozbor přijde v dalším commitu.)
-        </p>
-        <Button asChild size="lg" className="w-full">
-          <Link href="/learn">Zpět na cestu</Link>
-        </Button>
-      </div>
-    );
+    return <ResultScreen submission={result} exercises={lesson.exercises} />;
   }
 
   return (
