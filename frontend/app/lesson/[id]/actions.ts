@@ -33,6 +33,44 @@ export type SubmissionResponse = {
   };
 };
 
+export type ExerciseCheckResult = {
+  exercise_id: string;
+  correct: boolean;
+  user_answer: number | string;
+  correct_answer: number | string;
+  explanation: string | null;
+};
+
+export async function checkExerciseAnswer(
+  exerciseId: string,
+  answer: number | string,
+): Promise<
+  { ok: true; data: ExerciseCheckResult } | { ok: false; error: string }
+> {
+  const cookieStore = await cookies();
+  const session = cookieStore.get("mathingo_session");
+  if (!session) {
+    return { ok: false, error: "Tvá relace vypršela. Přihlas se prosím znovu." };
+  }
+
+  const res = await fetch(apiUrl(`/exercises/${exerciseId}/check`), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      cookie: `mathingo_session=${session.value}`,
+    },
+    body: JSON.stringify({ answer }),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    return { ok: false, error: "Nepovedlo se ověřit odpověď. Zkus to znovu." };
+  }
+
+  const data = (await res.json()) as ExerciseCheckResult;
+  return { ok: true, data };
+}
+
 export async function submitLessonAnswers(
   lessonId: string,
   answers: AnswerSubmission[],

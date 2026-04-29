@@ -6,16 +6,22 @@ import { Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { ChatExplainPanel } from "@/components/exercise/chat-explain-panel";
+import {
+  ExerciseFeedback,
+  type ExerciseFeedbackData,
+} from "@/components/exercise/exercise-feedback";
+import { LessonSummary } from "@/components/exercise/lesson-summary";
 import {
   MultipleChoiceExercise,
   type MultipleChoicePayload,
 } from "@/components/exercise/multiple-choice-exercise";
 import { NumericExercise } from "@/components/exercise/numeric-exercise";
-import { ResultScreen } from "@/components/exercise/result-screen";
 
 import {
   type AnswerSubmission,
   type SubmissionResponse,
+  checkExerciseAnswer,
   submitLessonAnswers,
 } from "./actions";
 
@@ -33,14 +39,18 @@ export type LessonData = {
   exercises: Exercise[];
 };
 
-type Phase = "answering" | "submitted";
+// answering → checking → feedback → (next answering | summary)
+type Phase =
+  | { kind: "answering" }
+  | { kind: "checking" }
+  | { kind: "feedback"; data: ExerciseFeedbackData; askingAi: boolean }
+  | { kind: "summary"; submission: SubmissionResponse };
 
 export function LessonRunner({ lesson }: { lesson: LessonData }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, number | string>>({});
-  const [phase, setPhase] = useState<Phase>("answering");
-  const [result, setResult] = useState<SubmissionResponse | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [phase, setPhase] = useState<Phase>({ kind: "answering" });
+  const [submitting, startSubmit] = useTransition();
 
   const total = lesson.exercises.length;
   const currentExercise = lesson.exercises[currentIndex];
@@ -56,30 +66,60 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
     setAnswers((prev) => ({ ...prev, [currentExercise.id]: value }));
   }
 
-  function handleNext() {
-    if (currentIndex < total - 1) {
-      setCurrentIndex(currentIndex + 1);
+  async function handleCheck() {
+    if (!currentExercise || !hasAnswer) return;
+    setPhase({ kind: "checking" });
+    const outcome = await checkExerciseAnswer(
+      currentExercise.id,
+      currentAnswer as number | string,
+    );
+    if (!outcome.ok) {
+      toast.error(outcome.error);
+      setPhase({ kind: "answering" });
+      return;
     }
+    setPhase({
+      kind: "feedback",
+      data: {
+        correct: outcome.data.correct,
+        user_answer: outcome.data.user_answer,
+        correct_answer: outcome.data.correct_answer,
+        explanation: outcome.data.explanation,
+      },
+      askingAi: false,
+    });
   }
 
-  function handleSubmit() {
+  function handleContinue() {
+    if (!isLast) {
+      setCurrentIndex(currentIndex + 1);
+      setPhase({ kind: "answering" });
+      return;
+    }
+    // Last exercise — batch-submit so persistence (lesson_attempt, streak,
+    // daily_activity) happens server-side and we get the high-level summary.
     const payload: AnswerSubmission[] = lesson.exercises.map((ex) => ({
       exercise_id: ex.id,
       answer: answers[ex.id] as number | string,
     }));
-    startTransition(async () => {
+    startSubmit(async () => {
       const outcome = await submitLessonAnswers(lesson.id, payload);
       if (!outcome.ok) {
         toast.error(outcome.error);
+        // Stay on feedback so the user can retry "Dokončit lekci"
         return;
       }
-      setResult(outcome.data);
-      setPhase("submitted");
+      setPhase({ kind: "summary", submission: outcome.data });
     });
   }
 
-  if (phase === "submitted" && result) {
-    return <ResultScreen submission={result} exercises={lesson.exercises} />;
+  function handleAskAi() {
+    if (phase.kind !== "feedback") return;
+    setPhase({ ...phase, askingAi: true });
+  }
+
+  if (phase.kind === "summary") {
+    return <LessonSummary submission={phase.submission} />;
   }
 
   return (
@@ -100,7 +140,7 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
       </header>
 
       <main className="mx-auto flex w-full max-w-xl flex-1 flex-col px-6 py-8">
-        <div className="flex-1">
+        <div className="flex-1 space-y-6">
           {currentExercise?.exercise_type === "multiple_choice" && (
             <MultipleChoiceExercise
               prompt={currentExercise.prompt}
@@ -120,36 +160,45 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
               onChange={(v) => handleAnswer(v ?? "")}
             />
           )}
-        </div>
 
-        <div className="mt-8">
-          {!isLast ? (
-            <Button
-              size="lg"
-              className="w-full"
-              disabled={!hasAnswer}
-              onClick={handleNext}
-            >
-              Pokračovat
-            </Button>
-          ) : (
-            <Button
-              size="lg"
-              className="w-full"
-              disabled={!hasAnswer || pending}
-              onClick={handleSubmit}
-            >
-              {pending ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Odesílám…
-                </>
-              ) : (
-                "Dokončit"
+          {phase.kind === "feedback" && currentExercise && (
+            <>
+              <ExerciseFeedback
+                feedback={phase.data}
+                onContinue={handleContinue}
+                onAskAi={handleAskAi}
+                showAskAi={!phase.data.correct && !phase.askingAi}
+                isLast={isLast}
+              />
+              {phase.askingAi && !phase.data.correct && (
+                <ChatExplainPanel
+                  exerciseId={currentExercise.id}
+                  userAnswer={phase.data.user_answer}
+                />
               )}
-            </Button>
+            </>
           )}
         </div>
+
+        {phase.kind !== "feedback" && (
+          <div className="mt-8">
+            <Button
+              size="lg"
+              className="w-full"
+              disabled={!hasAnswer || phase.kind === "checking" || submitting}
+              onClick={handleCheck}
+            >
+              {phase.kind === "checking" || submitting ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Ověřuji…
+                </>
+              ) : (
+                "Zkontrolovat"
+              )}
+            </Button>
+          </div>
+        )}
       </main>
     </div>
   );
