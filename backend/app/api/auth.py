@@ -130,6 +130,8 @@ async def onboarding(
     user.first_name = payload.first_name
     user.display_name = payload.display_name
     user.daily_xp_goal = payload.daily_xp_goal
+    user.avatar_variant = payload.avatar_variant
+    user.avatar_palette = payload.avatar_palette
     await db.commit()
 
     return OnboardingResponse(status="ok")
@@ -159,6 +161,8 @@ async def me(
         first_name=user.first_name,
         display_name=user.display_name,
         daily_xp_goal=user.daily_xp_goal,
+        avatar_variant=user.avatar_variant,
+        avatar_palette=user.avatar_palette,
         streak=streak.current_length if streak else 0,
         xp_today=xp_today,
         last_activity_date=streak.last_active_date if streak else None,

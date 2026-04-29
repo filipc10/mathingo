@@ -19,6 +19,8 @@ class OnboardingRequest(BaseModel):
     first_name: str = Field(min_length=1, max_length=40)
     display_name: str = Field(min_length=3, max_length=30)
     daily_xp_goal: Literal[10, 20, 40]
+    avatar_variant: Literal["marble", "beam", "pixel", "sunset", "ring", "bauhaus"]
+    avatar_palette: Literal["blue", "green", "purple", "sunset", "mono"]
 
 
 class OnboardingResponse(BaseModel):
@@ -33,6 +35,8 @@ class MeResponse(BaseModel):
     first_name: str
     display_name: str
     daily_xp_goal: int
+    avatar_variant: str
+    avatar_palette: str
     streak: int
     xp_today: int
     last_activity_date: date | None
