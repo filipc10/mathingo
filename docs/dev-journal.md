@@ -1040,3 +1040,174 @@ users.display_name | character varying(40) | NOT NULL | (no default)
   session je interesting — ukazuje, jak Claude Code zvládá
   multi-track plánování (DB + backend + frontend + i18n) bez
   ztráty kontextu mezi vrstvami.
+
+---
+
+## Session 008 — 2026-04-29 — Seed obsah + read-only content API
+
+- **Prompt ID:** #8
+- **Iterací plánu:** 1 (plán schválen napoprvé s drobnými dodatky:
+  empirický check JSON escapu, sloučit commit 3+4 do jednoho)
+- **Uživatelských zpráv v session:** 2 (prompt + plán schválení)
+- **Commity v session:** 4 (z plánovaných 5 — empty marker commit
+  vynechán dle session-004 patternu)
+
+### Cíl
+
+Naplnit DB ukázkovým vzdělávacím obsahem (1 sekce „Limity funkce",
+4 lekce, 10 cvičení) v kurzu 4MM101 přes Alembic seed migraci.
+Vystavit obsah přes 3 read-only GET endpointy (`/courses/<id|code>`,
+`/courses/<id|code>/structure`, `/lessons/<uuid>`). Žádné UI změny.
+
+### Co fungovalo na první pokus
+
+- Plán schválen napoprvé. 6 explicitních rozhodnutí (migration
+  approach, idempotence, struktura souborů, resolver, KaTeX
+  escaping, žádný auth) bylo dostatečně pre-validováno, takže
+  uživatel přidal jen zpřesnění (empirický check + commit merge).
+- Pydantic schemas: 6 modelů (CourseResponse, LessonSummary,
+  SectionWithLessons, CourseStructure, ExerciseResponse,
+  LessonDetail) s `from_attributes=True` — endpoint handlery
+  hand-off ORM rows přímo do `model_validate` bez explicit
+  conversion.
+- API router se 3 endpointy + `_load_course` resolver (UUID-or-
+  code) — funguje na první build. UUID parsing přes `try: UUID(s)`
+  + fallback na `code` lookup.
+- `selectinload` eager loading: `selectinload(Course.sections)
+  .selectinload(Section.lessons)` pro structure, `selectinload(
+  Lesson.exercises)` pro lesson detail. Žádné N+1, ordering
+  zajištěno přes `order_by="<sibling>.order_index"` na
+  relationship z session 004.
+- Empirický KaTeX escape check pochází z plánu uživatele:
+  ```
+  curl /api/lessons/<id> | jq '.exercises[0].prompt'
+  → "Co intuitivně znamená zápis $\\lim_{x \\to 2} f(x) = 5$?"
+  ```
+  Backslashy double v JSON (correct), single v `python -c repr` po
+  parsování (correct), single v DB stored (correct). Žádné
+  double-escape kolize.
+
+### Co bylo potřeba opravit
+
+#### Drobnost: první Write na migrate file selhal (Read-first guard)
+
+Po `alembic revision -m "..."` vznikl skeleton migrace v containeru.
+`docker cp` ho přenesl na host. Když jsem ho chtěl přepsat reálným
+obsahem, Write tool odmítl s „File has not been read yet" — guard,
+který chrání před overwrite bez prior Read. Standardní pattern
+Claude Code's editing flow.
+
+**Fix:** Read si soubor jednou + Write přes existing path. Mezitím
+prázdný `upgrade()` skeleton se aplikoval na DB přes `alembic
+upgrade head` (no-op, žádné insert). Přes `alembic downgrade -1`
+revertnul + Write s reálným obsahem + apply znovu. Žádný side
+effect na DB.
+
+**Lekce:** `alembic revision -m` generuje skeleton soubor — než
+se ho přepíše, vždycky ho jednou Read. Ověřit `alembic current`
+po každém upgrade/downgrade je laciné a chytá tichý no-op.
+
+### Rozhodnutí, která stojí za zaznamenání
+
+- **Inline `sa.table()` Core SQL místo ORM Session v migraci.**
+  Decoupled od ORM modelů — pokud v budoucnu Exercise model změní
+  schema, historická migrace zůstane platná. Plus parametrized
+  binds řeší LaTeX escaping a JSONB serializaci automaticky bez
+  manuálního `json.dumps()`.
+- **Idempotence přes `ON CONFLICT (composite) DO NOTHING`** na
+  composite UNIQUE z session 004. `_upsert_returning_id` helper
+  handles both paths: insert returning new id, fallback select
+  when row existed. Re-běh migrace = no-op. Robustní pro reálná
+  deployment scenarios kdyby někdo `alembic upgrade head` spustil
+  vícekrát.
+- **`services/content.py` neexistuje** — `_load_course` privátní
+  fn v `api/content.py`. Premature abstraction antipattern; když
+  přibude druhý use case, extract.
+- **Žádný auth na content endpointech.** Vědomě veřejné.
+  Read-only curriculum content nemá privacy sensitivity. Komise
+  může v Swagger procházet bez login. Auth-gating = friction
+  bez bezpečnostního benefitu. Pokud změna potřeba, je to jeden
+  `Depends(get_current_user)` v každém handleru.
+- **KaTeX backslash flow (Python literal → DB → JSON response →
+  browser → KaTeX):** Python `"\\lim..."` = string `\lim...` →
+  DB ukládá `\lim...` (single) → JSON encoder vyplive
+  `"\\lim..."` (double in JSON syntax) → browser `JSON.parse`
+  dekoduje na `\lim...` → KaTeX renderuje. Bind parametry
+  v migraci řeší celý round trip bez ručního escaping.
+- **Sloučit commit 3+4** (seed + apply) do jednoho commitu místo
+  empty marker. Konzistentní s session 004 patternem; verifikační
+  evidence v commit body.
+
+### Použité verze a artefakty
+
+| Komponenta | Verze / Identifikace |
+|---|---|
+| Alembic migration | `f4ed5e40904a` (seed 4MM101 limity section content) |
+| Sekce | 1 — „Limity funkce" |
+| Lekce | 4 — Pojem limity, Limity v nevlastních bodech, Jednostranné limity, Pravidla pro výpočet limit |
+| Cvičení | 10 — 6× multiple_choice + 4× numeric |
+
+### Verifikační výstupy
+
+**Seed po apply:**
+```
+    section    |           lesson            | xp_reward | exercise_count
+---------------+-----------------------------+-----------+----------------
+ Limity funkce | Pojem limity                |        10 |              3
+ Limity funkce | Limity v nevlastních bodech |        15 |              2
+ Limity funkce | Jednostranné limity         |        15 |              2
+ Limity funkce | Pravidla pro výpočet limit  |        20 |              3
+```
+
+**API endpointy:**
+```
+GET /api/courses/4MM101                          → 200 (CourseResponse)
+GET /api/courses/<uuid>                          → 200 (CourseResponse)
+GET /api/courses/4MM101/structure                → 200 (4 lessons in order)
+GET /api/lessons/<lesson1-uuid>                  → 200 (3 exercises in order)
+GET /api/courses/UNKNOWN                         → 404 (course_not_found)
+GET /api/lessons/00000000-0000-0000-0000-…       → 404 (lesson_not_found)
+GET /api/lessons/not-a-uuid                      → 422 (Pydantic UUID validation)
+```
+
+**KaTeX escape (per uživatelův návrh):**
+```
+DB stored:    "Co intuitivně znamená zápis $\lim_{x \to 2} f(x) = 5$?"
+JSON output:  "Co intuitivně znamená zápis $\\lim_{x \\to 2} f(x) = 5$?"
+Python repr:  'Co intuitivně znamená zápis $\\lim_{x \\to 2} f(x) = 5$?'
+              (\\ in repr = single \ in actual string)
+```
+
+Žádný double-double escape (`\\\\`) v JSON — round trip čistý.
+
+### Known limitations / out-of-scope
+
+- **Pouze 2 typy cvičení** — multiple_choice + numeric. Brief
+  explicit. true_false, matching, step_ordering jsou v enumu
+  z session 004, ale obsah pro ně přijde s rozšířením kurikula.
+- **Žádný UI rendering cvičení.** `/learn` zůstává placeholder
+  s 7 stones. Lesson runner UI + napojení na content API přijde
+  v promptu #9.
+- **Žádné progress tracking** v této session — progress, streak,
+  XP earning přijdou s lesson runtime.
+- **Tests odložené** — pokračování DoD deviation z session 005.
+
+### Dojem
+
+- Plán-execute flow funguje hladce: 6 explicitních rozhodnutí
+  v plánu = 0 mid-session blockerů. Jediný drobný bump (Write
+  guard po `alembic revision` skeletonu) byl vyřešen v 1 minutě
+  bez side-effectu na DB.
+- Inline `sa.table()` pattern je elegantní — schema lokalizovaný
+  uvnitř migrace, parametrized inserts, ON CONFLICT idempotence.
+  Když člověk migrace „dostane do ruky" jen jednou, obvykle to
+  uvidíte jako verbose; když je vidíte 50 × při schema evolution
+  later, pochopíte, proč decoupled-from-ORM je standardní pattern.
+- KaTeX escape check uživatele byl preventivní — bez něj bych
+  empiricky neověřil, že JSON round trip není double-escapnutý.
+  Bind parametry to řeší automaticky, ale „věřit a ověřit" je
+  pro thesis writeup hodnotnější než „věřit".
+- Sloučení commits 3+4 (single „seed" commit místo empty marker)
+  zajišťuje, že každý commit reprezentuje funkční change. Empty
+  markers v session 004 by retrospektivně přidaly noise; v
+  session 008 jsme se jim vyhnuli.
