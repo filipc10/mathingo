@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { PathStone } from "@/components/learn/path-stone";
 import { getCurrentUser } from "@/lib/auth";
+import { vocative } from "@/lib/vocative";
 
 const STONES = [
   { i: 1, status: "available" as const, offset: 0 },
@@ -20,7 +21,7 @@ export default async function LearnPage() {
   if (!user) {
     redirect("/signin");
   }
-  if (user.display_name === "") {
+  if (user.first_name === "" || user.display_name === "") {
     redirect("/onboarding");
   }
 
@@ -55,7 +56,7 @@ export default async function LearnPage() {
 
       <main className="mx-auto max-w-3xl px-6 py-12">
         <div className="mb-12 text-center">
-          <h1 className="mb-2">Vítej, {user.display_name}!</h1>
+          <h1 className="mb-2">Vítej, {vocative(user.first_name)}!</h1>
           <p className="font-medium text-muted-foreground">
             Tvoje cesta lekcemi začíná zde.
           </p>
