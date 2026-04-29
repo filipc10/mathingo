@@ -2147,3 +2147,188 @@ environmentu pro thesis prezentaci.
 - Final MVP feature complete: lesson runner ✓, AI chat ✓,
   markdown rendering ✓, leaderboard ✓. Aplikace má kompletní
   Duolingo-style gamification scope dle thesis kapitoly 1.
+
+---
+
+## Session 014 — 2026-04-29 — Post-MVP polish a bug fixy
+
+- **Prompt ID:** #14
+- **Iterací plánu:** 1 (plán schválen napoprvé, dva body korekce
+  v plánu — viz „Empty answer" a „Sticky button refactor scope")
+- **Uživatelských zpráv v session:** 2 (prompt + plán schválení)
+- **Commity v session:** **3** (2 fix + 1 docs)
+
+### Cíl
+
+Tři drobné UX fixy z visual review po session 011-013:
+
+1. Frozen MC options po kliknutí „Zkontrolovat"
+2. Empty answer state — předem ověřit že disabled button funguje
+3. Sticky bottom button na mobile, aby user nemusel scrollovat
+
+### Pre-flight: Fix 4 už implementovaný
+
+Brief listoval 4 fixy, ale po čtení kódu bod #4 (empty answer disabled)
+**už je implementovaný** od session 011. `lesson-runner.tsx` má:
+
+```tsx
+const hasAnswer =
+  currentAnswer !== undefined && currentAnswer !== null && currentAnswer !== "";
+// ...
+disabled={!hasAnswer || phase.kind === "checking" || submitting}
+```
+
+Plus `handleCheck` early-returnuje při `!hasAnswer`. Žádný silent
+no-op nebo crash path neexistuje. Browser ignoruje click na disabled
+button. Verifikováno visual review po rebuildu.
+
+Pre-flight kontrola kódu **před** plán fází odhalila tento duplicate
+fix request. Plán bod surfaceoval jako „už hotovo, jen verify". Podle
+toho 4 fixy v briefu se zredukovaly na 2 reálné code changes + journal.
+
+### Fix 1: Frozen exercise state
+
+`MultipleChoiceExercise` a `NumericExercise` dostaly nová optional
+props `phase` (default `"answering"`) a `correctIndex`/`correctValue`.
+
+#### MC styling map v feedback phase
+
+Mutually exclusive čtyři stavy (per cell):
+- `selected && correct` → strong green border + bg + bold (žádný
+  vizuální rozdíl od answering selected, ale **green** místo blue
+  potvrzuje správnost)
+- `selected && !correct` → strong red border + bg + bold
+- `!selected && correct` → subtle green outline (hint na správnou
+  odpověď když user vybral chybně — pedagogická hodnota)
+- `!selected && !correct` → muted neutral (`opacity-60`)
+
+Click handler je `() => !frozen && onSelect(idx)`, plus button má
+`disabled={frozen}` jako defense-in-depth. Browser ignore click na
+disabled, ale handler check zachytí případ kdyby parent dynamic
+re-renderoval během transition.
+
+#### Numeric
+
+Input dostane `disabled` + `readOnly` (oba — disabled blokuje pointer
+events, readOnly zaručí že případný JS focus nemůže měnit hodnotu).
+Hodnota zůstává viditelná `value={value ?? ""}` bez clearu, takže
+compare v `ExerciseFeedback` (Tvoje 5 · Správně 7) odpovídá co je
+na obrazovce.
+
+### Fix 3: Sticky bottom button
+
+#### Refactor scope větší než vypadá
+
+Brief navrhoval jednoduchý sticky div okolo existující button. Jenže
+v session 011 implementaci `ExerciseFeedback` **vlastnil svůj continue
+button** (Pokračovat / Dokončit lekci). To znamenalo:
+- V `answering` phase: button na bottom of main
+- V `feedback` phase: button uvnitř ExerciseFeedback komponenty,
+  vizuálně někde uprostřed page mezi feedback boxem a chat panelem
+
+Sticky kontejner okolo jen jednoho z nich by vyrobil inkonzistenci.
+Řešení: **unifikovat na jediný sticky CTA** v lesson runner, který
+mění label podle phase:
+- `answering` → „Zkontrolovat"
+- `checking` → „Ověřuji…" (spinner)
+- `feedback` mid-lesson → „Pokračovat"
+- `feedback` last exercise → „Dokončit lekci"
+
+`ExerciseFeedback` se redukoval na čistě prezentační komponent:
+green/red box + optional „Chci to dovysvětlit" CTA. Ta druhá zůstává
+inline, protože je kontextuální k feedback sekci, ne primary forward
+action.
+
+#### Layout
+
+```tsx
+<div className="flex min-h-screen flex-col">
+  <header className="sticky top-0 ...">...</header>
+  <main className="... pb-32 ...">{exercise + feedback + chat}</main>
+  <div className="sticky bottom-0 ... border-t ... backdrop-blur">
+    <Button ...>{buttonLabel}</Button>
+  </div>
+</div>
+```
+
+`pb-32` na main zajistí, že last line content scrollne nad sticky bar
+bez clippingu. `backdrop-blur` matchuje idiom z top baru.
+
+### Fix 2: Git push verification
+
+Push v session 013 závěru fungoval out-of-the-box (`gh` auth z session
+002 stále valid). 18 commitů (sessions 011/012/013) prošlo
+`c7773d4..519fd0f main -> main` bez error.
+
+#### Reminder pro budoucí sessions
+
+Po každé session, když se komituje dev journal, **push hned**:
+
+```bash
+git push origin main
+```
+
+VPS-local clone je dev environment, GitHub je canonical source.
+Sessions 011-013 měly 17-commit gap, který se vyřešil až explicit
+user-initiated push na konci session 013. Auto-push po session
+journal commit eliminuje tuhle desync.
+
+Pokud kdy `git push` selže (rotate token, expired auth):
+- Check `gh auth status` — re-login pokud needed
+- Check `git remote -v` — origin URL musí být `https://github.com/...`
+- Fall back: `gh auth setup-git` re-konfiguruje credentials
+
+### Verifikace
+
+- TypeScript: `npx tsc --noEmit` → clean
+- Frontend rebuild: `docker compose -f docker-compose.yml up -d
+  --build frontend` → frontend image recreated, ostatní služby
+  pokračují bez restartu
+- Visual flow: na uživateli (frozen MC, sticky button na mobile,
+  empty-answer disabled state)
+
+### Out of scope
+
+- **True-false, matching, step-ordering exercise types** — nejsou v
+  current MVP scope
+- **Animations** mezi answering→feedback transition (fade nebo slide
+  effect na options) — deferred, current snap je clear enough
+- **Keyboard navigation** v MC (arrow keys + Enter) — accessibility
+  improvement out of MVP
+- **Dark mode tweaks** pro frozen states — current opacity-60
+  funguje v obou modes
+
+### Dojem
+
+- Pre-flight kontrola briefu odhalila duplicate fix request (Fix 4
+  už implementováno). Plán fáze surfacuje to **before** kódování,
+  místo „aha, tohle už máme" 30 řádků do změny. Tenhle drobný
+  pattern (read code first, plán with what's actually missing) má
+  složený efekt napříč sessions.
+- Sticky button refactor byl o stupeň větší než vypadal v briefu —
+  vlastnictví continue button musel migrovat z ExerciseFeedback do
+  LessonRunner. Rozumný trade-off: ExerciseFeedback je teď čistě
+  prezentační (single responsibility), LessonRunner gain footer
+  (orchestration responsibility, kde patří).
+- Frozen state s 4 mutually exclusive cells (selected+correct,
+  selected+incorrect, unselected+correct hint, unselected+neutral)
+  je pedagogický win. Brief jen popsal „ne-selektované zůstanou
+  neutral", ale dodal jsem subtle green outline na unselected
+  correct. To je „aha, tady byla správná" hint bez křiku. Visual
+  language: strong green/red = aktivní výsledek, subtle green =
+  reference.
+- Auto-push po journal commit zacuje normou. Sessions 011-013 had
+  17-commit gap, který bylo třeba později řešit ad-hoc. Better
+  to push every session.
+
+### Status MVP
+
+Po této session je MVP **production-ready** pro thesis demo:
+- ✅ Lesson runner s per-exercise feedback
+- ✅ AI chat (Claude Sonnet 4.6, streaming, rate limited)
+- ✅ Markdown rendering
+- ✅ Leaderboard (weekly + total, mock users, refresh script)
+- ✅ Frozen exercise state v feedback
+- ✅ Sticky mobile button
+- ✅ Empty answer disabled state
+- ✅ Git sync VPS ↔ GitHub
