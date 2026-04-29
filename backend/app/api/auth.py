@@ -102,7 +102,8 @@ async def verify(
     await db.commit()
     await db.refresh(user)
 
-    redirect_url = "/onboarding" if user.display_name == "" else "/learn"
+    needs_onboarding = user.first_name == "" or user.display_name == ""
+    redirect_url = "/onboarding" if needs_onboarding else "/learn"
     response = RedirectResponse(url=redirect_url, status_code=302)
     _set_session_cookie(response, create_session_jwt(user.id))
     return response
