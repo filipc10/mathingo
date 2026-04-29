@@ -13,7 +13,10 @@ class SignInResponse(BaseModel):
 
 
 class OnboardingRequest(BaseModel):
-    display_name: str = Field(min_length=3, max_length=40)
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    first_name: str = Field(min_length=1, max_length=40)
+    display_name: str = Field(min_length=3, max_length=30)
     daily_xp_goal: Literal[10, 20, 40]
 
 
@@ -26,5 +29,6 @@ class MeResponse(BaseModel):
 
     id: UUID
     email: EmailStr
+    first_name: str
     display_name: str
     daily_xp_goal: int

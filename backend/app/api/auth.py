@@ -92,6 +92,7 @@ async def verify(
         course = course_result.scalar_one_or_none()
         user = User(
             email=record.email,
+            first_name="",
             display_name="",
             daily_xp_goal=20,
             course_id=course.id if course is not None else None,
@@ -125,6 +126,7 @@ async def onboarding(
             detail="display_name_taken",
         )
 
+    user.first_name = payload.first_name
     user.display_name = payload.display_name
     user.daily_xp_goal = payload.daily_xp_goal
     await db.commit()
