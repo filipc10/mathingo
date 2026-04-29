@@ -3,7 +3,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,6 +14,7 @@ from app.models import (
     Course,
     DailyActivity,
     Exercise,
+    ExerciseAttempt,
     Lesson,
     LessonAttempt,
     Section,
@@ -246,8 +247,14 @@ async def _persist_attempt_and_progress(
     lesson: Lesson,
     correct_count: int,
     total_count: int,
+    exercise_evaluations: list[tuple[Exercise, bool, Any]],
 ) -> tuple[bool, int, int, int]:
-    """Insert lesson_attempt + update streaks + upsert daily_activities.
+    """Insert lesson_attempt + N×exercise_attempts + streak + daily_activity.
+
+    All writes share the outer SQLAlchemy session — if any one of them
+    raises, FastAPI's dependency teardown rolls back the whole transaction
+    so we never observe an inconsistent state (e.g. lesson_attempt without
+    its exercise rows).
 
     Returns (is_lesson_completed, xp_earned, user_streak, user_xp_today).
 
@@ -286,28 +293,49 @@ async def _persist_attempt_and_progress(
         "finished_at": now_ts,
     }
 
+    lesson_attempt = LessonAttempt(
+        **attempt_kwargs,
+        is_completed=db_is_completed,
+        xp_earned=xp_earned,
+    )
     try:
         async with db.begin_nested():
-            db.add(
-                LessonAttempt(
-                    **attempt_kwargs,
-                    is_completed=db_is_completed,
-                    xp_earned=xp_earned,
-                )
-            )
+            db.add(lesson_attempt)
     except IntegrityError:
         # A concurrent submit beat us to the completed slot — record this
         # attempt as not-completed and earn no XP.
         db_is_completed = False
         xp_earned = 0
-        db.add(
-            LessonAttempt(
-                **attempt_kwargs,
-                is_completed=False,
-                xp_earned=0,
-            )
+        lesson_attempt = LessonAttempt(
+            **attempt_kwargs,
+            is_completed=False,
+            xp_earned=0,
         )
+        db.add(lesson_attempt)
         await db.flush()
+    else:
+        await db.flush()
+
+    # Bulk-insert exercise_attempts. This needs lesson_attempt.id, hence
+    # the flush above. Denormalised columns (user_id, section_id, lesson_id,
+    # exercise_type) make per-user / per-section / per-type aggregations
+    # in the stats endpoint cheap.
+    exercise_attempt_rows = [
+        {
+            "lesson_attempt_id": lesson_attempt.id,
+            "exercise_id": exercise.id,
+            "user_id": user.id,
+            "exercise_type": exercise.exercise_type.value,
+            "section_id": lesson.section_id,
+            "lesson_id": lesson.id,
+            "answer": {"value": user_answer},
+            "is_correct": is_correct,
+            "time_spent_ms": None,
+        }
+        for exercise, is_correct, user_answer in exercise_evaluations
+    ]
+    if exercise_attempt_rows:
+        await db.execute(insert(ExerciseAttempt), exercise_attempt_rows)
 
     # Streak upsert (one row per user)
     streak = (
@@ -396,12 +424,14 @@ async def submit_lesson_answers(
     }
 
     results: list[ExerciseResult] = []
+    evaluations: list[tuple[Exercise, bool, Any]] = []
     correct_count = 0
     for ex in lesson.exercises:  # iteration order from order_index relationship
         user_answer = submissions_by_id[ex.id]
         is_correct, correct_answer = _evaluate(ex, user_answer)
         if is_correct:
             correct_count += 1
+        evaluations.append((ex, is_correct, user_answer))
         results.append(
             ExerciseResult(
                 exercise_id=ex.id,
@@ -421,6 +451,7 @@ async def submit_lesson_answers(
             lesson=lesson,
             correct_count=correct_count,
             total_count=total,
+            exercise_evaluations=evaluations,
         )
     )
     await db.commit()
