@@ -9,6 +9,7 @@ from sqlalchemy import (
     Date,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     UniqueConstraint,
     text,
@@ -71,6 +72,19 @@ class UserLessonProgress(IDMixin, TimestampMixin, Base):
 
 class LessonAttempt(IDMixin, Base):
     __tablename__ = "lesson_attempts"
+    __table_args__ = (
+        # Partial UNIQUE: at most one completed attempt per (user, lesson),
+        # so XP is awarded exactly once. Subsequent ≥80% attempts get
+        # is_completed=False and earn no XP — the application enforces this,
+        # the index is defence-in-depth.
+        Index(
+            "uq_lesson_attempts_user_lesson_completed",
+            "user_id",
+            "lesson_id",
+            unique=True,
+            postgresql_where=text("is_completed = true"),
+        ),
+    )
 
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -89,6 +103,9 @@ class LessonAttempt(IDMixin, Base):
     )
     finished_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
+    )
+    is_completed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
     )
     xp_earned: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
