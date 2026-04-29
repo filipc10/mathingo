@@ -31,6 +31,8 @@ class User(IDMixin, TimestampMixin, Base):
     daily_xp_goal: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("20")
     )
+    avatar_variant: Mapped[str] = mapped_column(String(20), nullable=False)
+    avatar_palette: Mapped[str] = mapped_column(String(20), nullable=False)
     course_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("courses.id"),
