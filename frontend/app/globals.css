@@ -1,74 +1,95 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
 
 /* =============================================================================
-   Mathingo design tokens
-   - Light mode only (dark mode není v MVP scope)
-   - Primary modrá #0073FF
-   - Akcent zelená #22C55E
-   - Font Nunito (Google Fonts) s vyššími vahami pro nadpisy
+   Mathingo design tokens — DARK MODE AS DEFAULT
+   - Pozadí #1F2937 (gray-800), text bílý
+   - Primary modrá #0073FF jako akcent (svítí proti tmavému pozadí)
+   - Akcent zelená #22C55E pro success states
+   - Light mode varianta zachována pod .light třídou (nepoužívaná, ale připravená)
    ============================================================================= */
 
 :root {
-  /* Brand colors */
-  --primary: oklch(0.59 0.22 252);              /* #0073FF */
-  --primary-foreground: oklch(1 0 0);            /* white */
+  /* === Surfaces (tmavé pozadí, světlý text) === */
+  --background: oklch(0.27 0.014 252);           /* #1F2937 gray-800 */
+  --foreground: oklch(0.97 0.002 247);           /* #F9FAFB gray-50 */
 
-  --accent: oklch(0.72 0.18 145);                /* #22C55E green-500 */
-  --accent-foreground: oklch(1 0 0);             /* white */
+  --card: oklch(0.32 0.013 252);                 /* #2C3441 — slightly lighter than bg */
+  --card-foreground: oklch(0.97 0.002 247);
 
-  /* Surfaces */
-  --background: oklch(1 0 0);                    /* #FFFFFF */
-  --foreground: oklch(0.27 0.014 252);           /* #1F2937 gray-800 — ne čistá černá */
+  --popover: oklch(0.32 0.013 252);
+  --popover-foreground: oklch(0.97 0.002 247);
 
-  --card: oklch(1 0 0);                          /* #FFFFFF */
-  --card-foreground: oklch(0.27 0.014 252);
+  /* === Brand colors — fungují proti tmavému pozadí === */
+  --primary: oklch(0.59 0.22 252);               /* #0073FF */
+  --primary-foreground: oklch(1 0 0);
 
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.27 0.014 252);
+  --accent: oklch(0.72 0.18 145);                /* #22C55E */
+  --accent-foreground: oklch(0.27 0.014 252);    /* tmavý text na zelené */
 
-  /* Subtle backgrounds & text */
-  --muted: oklch(0.97 0.003 247);                /* #F3F4F6 gray-100 */
-  --muted-foreground: oklch(0.55 0.013 252);     /* #6B7280 gray-500 — pro hint texty */
+  /* === Subtle backgrounds & text === */
+  --muted: oklch(0.36 0.013 252);                /* #374151 gray-700 */
+  --muted-foreground: oklch(0.65 0.013 252);     /* #9CA3AF gray-400 */
 
-  --secondary: oklch(0.97 0.003 247);            /* same as muted, neutral fallback */
-  --secondary-foreground: oklch(0.27 0.014 252);
+  --secondary: oklch(0.36 0.013 252);
+  --secondary-foreground: oklch(0.97 0.002 247);
 
-  /* Borders & inputs */
-  --border: oklch(0.91 0.005 247);               /* #E5E7EB gray-200 */
-  --input: oklch(0.91 0.005 247);
-  --ring: oklch(0.59 0.22 252);                  /* primary — focus ring */
+  /* === Borders & inputs === */
+  --border: oklch(0.40 0.013 252);               /* #4B5563 gray-600 */
+  --input: oklch(0.36 0.013 252);
+  --ring: oklch(0.59 0.22 252);
 
-  /* States */
-  --destructive: oklch(0.63 0.24 27);            /* #EF4444 red-500 */
+  /* === States === */
+  --destructive: oklch(0.65 0.24 27);            /* #F87171 red-400 — světlejší pro dark */
   --destructive-foreground: oklch(1 0 0);
 
-  /* Radii — Duolingo-like rounded */
-  --radius: 0.875rem;                            /* 14px — base */
+  /* === Radii === */
+  --radius: 0.875rem;
 
-  /* Charts (placeholder, neused yet) */
+  /* === Charts === */
   --chart-1: oklch(0.59 0.22 252);
   --chart-2: oklch(0.72 0.18 145);
   --chart-3: oklch(0.78 0.14 80);
   --chart-4: oklch(0.65 0.22 30);
   --chart-5: oklch(0.55 0.18 300);
 
-  /* Sidebar (placeholder, neused yet) */
-  --sidebar: oklch(0.99 0.002 247);
-  --sidebar-foreground: oklch(0.27 0.014 252);
+  /* === Sidebar === */
+  --sidebar: oklch(0.32 0.013 252);
+  --sidebar-foreground: oklch(0.97 0.002 247);
   --sidebar-primary: oklch(0.59 0.22 252);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.97 0.003 247);
-  --sidebar-accent-foreground: oklch(0.27 0.014 252);
-  --sidebar-border: oklch(0.91 0.005 247);
+  --sidebar-accent: oklch(0.36 0.013 252);
+  --sidebar-accent-foreground: oklch(0.97 0.002 247);
+  --sidebar-border: oklch(0.40 0.013 252);
   --sidebar-ring: oklch(0.59 0.22 252);
 }
 
+/* Light mode varianta — neaktivní v MVP, připravená pro potenciální theme toggle */
+.light {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.27 0.014 252);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.27 0.014 252);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.27 0.014 252);
+  --primary: oklch(0.59 0.22 252);
+  --primary-foreground: oklch(1 0 0);
+  --accent: oklch(0.72 0.18 145);
+  --accent-foreground: oklch(1 0 0);
+  --muted: oklch(0.97 0.003 247);
+  --muted-foreground: oklch(0.55 0.013 252);
+  --secondary: oklch(0.97 0.003 247);
+  --secondary-foreground: oklch(0.27 0.014 252);
+  --border: oklch(0.91 0.005 247);
+  --input: oklch(0.91 0.005 247);
+  --ring: oklch(0.59 0.22 252);
+  --destructive: oklch(0.63 0.24 27);
+  --destructive-foreground: oklch(1 0 0);
+}
+
 @theme inline {
-  /* Map CSS vars to Tailwind 4 theme tokens */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -112,18 +133,14 @@
   --font-sans: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
 }
 
-/* =============================================================================
-   Base layer overrides
-   ============================================================================= */
-
 @layer base {
   * {
     @apply border-border;
   }
 
   html {
-    /* Plynulejší scrolling pro learn path scroll */
     scroll-behavior: smooth;
+    color-scheme: dark;
   }
 
   body {
@@ -134,7 +151,6 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Heading hierarchie — Nunito s vysokými vahami pro Duolingo-like punch */
   h1, h2, h3, h4 {
     @apply font-extrabold tracking-tight;
   }

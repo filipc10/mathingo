@@ -24,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="cs" className={nunito.variable}>
+    <html lang="cs" className={`dark ${nunito.variable}`}>
       <body className="antialiased">
         {children}
         <Toaster />
