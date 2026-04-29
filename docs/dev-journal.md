@@ -1619,3 +1619,242 @@ After submit lesson 1 (3/3 correct):
 - KaTeX render naive regex split + renderError fallback je „good
   enough" pattern: pokrývá 100% našeho seedovaného obsahu, fail-safe
   pro edge cases. Kompletní LaTeX parser by byl overkill pro MVP.
+
+---
+
+## Session 011 — 2026-04-29 — Okamžitá zpětná vazba + AI chat (Claude Sonnet 4.6)
+
+- **Prompt ID:** #11 (mega-session)
+- **Iterací plánu:** 0 (auto mode — uživatel zapnul autonomous execution
+  uprostřed plánovací fáze, takže jsem rozhodl bez dalšího ping-pongu)
+- **Uživatelských zpráv v session:** 1 prompt + auto-mode trigger
+- **Commity v session:** **8** (čistě commity, ne 14 — viz „Granularita"
+  níže)
+
+### Cíl
+
+Tři logicky propojené změny v jednom session:
+
+1. **Per-exercise immediate feedback.** Místo batch evaluation („vyplň
+   všechno → odešli → uvidíš výsledky") teď uživatel po každém cvičení
+   klikne „Zkontrolovat", okamžitě vidí správně/špatně, a pak
+   „Pokračovat" / „Dokončit lekci".
+2. **Dynamické dovysvětlení při chybě.** Tlačítko „Chci to dovysvětlit"
+   se zobrazí jen u špatných odpovědí.
+3. **AI chat přes Claude API.** Inline chat panel (ne modal),
+   streaming odpovědí, max 5 zpráv per cvičení, max 20 zpráv per den
+   na uživatele.
+
+### Vlastní inženýrské rozhodnutí proti briefu
+
+Uživatelův brief specifikoval model `claude-sonnet-4-7`, který
+**neexistuje** — nejnovější Sonnet je `claude-sonnet-4-6`. V auto módu
+jsem zvolil to, co uživatel zjevně myslel (nejnovější Sonnet), ale
+přidal jsem `ANTHROPIC_MODEL` env var aby šlo model přepnout bez code
+change. To stejné s `CHAT_DAILY_MESSAGE_LIMIT` /
+`CHAT_SESSION_MESSAGE_LIMIT` — víc-než-pravděpodobně budeme tunit za
+provozu.
+
+Pro chat jsem **nezapnul extended thinking**. System prompt explicit
+omezuje odpovědi na 3–4 věty; thinking by jen nafukoval cost bez
+přidané hodnoty pro pedagogický feedback.
+
+Prompt caching jsem **nezapnul** — system prompt + exercise context se
+vejdou do cca 500–800 tokenů, což je hluboko pod 2048-token cache
+minimum pro Sonnet 4.6. Cache by neměla žádný efekt; nemá smysl
+přidávat komplexitu pro nulovou úsporu.
+
+### Architektura
+
+#### Per-exercise check endpoint (defense-in-depth zachováno)
+
+Nový stateless endpoint `POST /exercises/{id}/check` re-používá
+existující `_evaluate(exercise, user_answer)` z session 009/010.
+**Žádný DB write** — pouze evaluace a vrácení `(correct,
+correct_answer, explanation)`. Submit endpoint
+`POST /lessons/{id}/submit` zůstává nezměněný a re-evaluuje
+server-side při finálním odeslání. To je defense-in-depth: i kdyby
+klient lhal o per-exercise výsledcích, finální XP/streak/completion
+status se počítají z čerstvé evaluace na serveru.
+
+#### Stream přes Server-Sent Events
+
+`POST /exercises/{id}/explain` vrací `text/event-stream` přes FastAPI
+`StreamingResponse`. Tři typy událostí:
+
+- `usage` (před streamem) — `{messages_used_today, daily_limit}` aby
+  klient mohl ihned aktualizovat „X / 20 dnes" counter
+- `token` — `{text: chunk}` z `client.messages.stream().text_stream`
+- `error` / `done` — terminální události
+
+Frontend čte stream přes `response.body.getReader()` a `TextDecoder`,
+buffuje fragmenty SSE rámců (split na `\n\n`), parsuje `event:` /
+`data:` řádky. Každý token chunk se přidá do rolovacího
+`assistantText` a re-renderuje přes `KaTeXRenderer` — díky
+`renderError` fallback v session 009 partial LaTeX („$\\frac{1}") prostě
+zůstává jako raw text, dokud se uzavře a parsuje.
+
+#### Atomický rate limit přes UPSERT
+
+`chat_usage` tabulka (`(user_id, usage_date)` UNIQUE) se inkrementuje
+přes Postgres `INSERT ... ON CONFLICT DO UPDATE ... RETURNING
+message_count`. Race-safe: dva souběžné requesty oba dostanou
+unique-postup increments, ne race condition kde oba přečtou stejnou
+hodnotu. Vrátí novou hodnotu v jednom round-tripu, takže ji můžeme
+poslat klientovi v `usage` SSE eventu.
+
+#### Per-session limit jako sanity check serverové strany
+
+Frontend počítá user turns klientsky a disabluje input po 5.
+Backend ale **také** kontroluje počet user turns v `request.messages`
+a vrátí 429 když by to crafted request přebil. Defense-in-depth ne
+pro UI race, ale pro kohokoliv kdo by zkusil curl bypass.
+
+#### State machine v lesson runneru
+
+Z 2-stavu (`answering | submitted`) na 4-stav diskriminovaná unie:
+
+```ts
+type Phase =
+  | { kind: "answering" }
+  | { kind: "checking" }
+  | { kind: "feedback"; data: ExerciseFeedbackData; askingAi: boolean }
+  | { kind: "summary"; submission: SubmissionResponse };
+```
+
+Tagged union eliminuje impossible states by construction — nikdy
+nebude existovat „submitted ale bez výsledku" nebo „feedback bez
+data". `askingAi` je local boolean uvnitř feedback variantu, ne
+samostatný top-level state.
+
+### Granularita
+
+Plán měl ~14 commitů, finálně jich bylo **8**. Některé commity
+splynuly:
+
+- Anthropic SDK + config = 1 commit (deps a config jsou neoddělitelné)
+- Streaming endpoint + rate limit = 1 commit (rate limit je integrální
+  součást endpointu, ne separate concern)
+- Lesson runner refactor + actions update + delete result-screen
+  = 1 commit (všechno jeden coherentní change)
+
+Nicméně tři frontend komponenty (ExerciseFeedback, ChatExplainPanel,
+LessonSummary) každá má svůj samostatný commit, protože jsou to
+nezávislé moduly použité od lesson runneru jako klientské primitivy.
+
+### Závislosti
+
+| package | verze | důvod |
+|---|---|---|
+| anthropic | 0.97.0 | Anthropic Python SDK pro Claude API streaming |
+
+Žádné nové frontend dependencies — `KaTeXRenderer` z session 009 je
+re-použit pro chat odpovědi, `Loader2`/`Send`/`Sparkles` jsou
+existující lucide-react ikony.
+
+### Schema změny
+
+Nová tabulka `chat_usage`:
+
+```
+                              Table "public.chat_usage"
+    Column     |           Type           | Nullable |      Default
+---------------+--------------------------+----------+-------------------
+ id            | uuid                     | not null | gen_random_uuid()
+ user_id       | uuid                     | not null |
+ usage_date    | date                     | not null |
+ message_count | integer                  | not null | 0
+ created_at    | timestamp with time zone | not null | now()
+ updated_at    | timestamp with time zone | not null | now()
+Indexes:
+  chat_usage_pkey                 PRIMARY KEY (id)
+  ix_chat_usage_usage_date        btree (usage_date)
+  uq_chat_usage_user_date         UNIQUE (user_id, usage_date)
+Foreign-key constraints:
+  user_id REFERENCES users(id) ON DELETE CASCADE
+```
+
+Migrace: `cc60b81c5a9e_add_chat_usage_table.py`. Pozor — autogenerate
+v dev environmentu vyprodukoval prázdnou migraci, protože dev
+override nebyl zapnutý a kontejner běžel produkční obraz bez volume
+mountu. Migraci jsem napsal ručně podle stejného formátu jako
+session 004's `daily_activities`.
+
+### Chyby/troubleshooting
+
+- **Volume mount mystery.** Aktuálně běžící kontejnery jsou
+  produkční obraz (`docker-compose.yml` bez dev overlay), ne dev
+  s `./backend:/app` mountem. Změny na hostu se nepromítaly do
+  kontejneru → musel jsem `docker cp` nové soubory ručně. Backend
+  s `--reload` to přežil; **frontend produkční build NESKONČIL
+  novými změnami**. Frontend bude potřeba rebuilnout (`docker compose
+  up --build frontend`) aby se UI změny projevily na live `mathingo.cz`.
+- **Pydantic strict types.** Schémata v session 009 použila
+  `StrictInt | StrictFloat | str` aby zabránila bool→int koerci.
+  V chat schemas jsem to dodržel jen pro `user_answer` (kde to má
+  význam), ne pro `ChatMessage.content` (čistě string).
+
+### Verifikační výstupy
+
+**Backend:**
+
+```
+$ python -c "from app.api.chat import router; print([r.path for r in router.routes])"
+['/exercises/{exercise_id}/explain']
+$ alembic upgrade head
+INFO  Running upgrade 738170845fc1 -> cc60b81c5a9e, add chat_usage table
+$ \d chat_usage
+[viz schema výše]
+```
+
+**Frontend typecheck:**
+
+```
+$ npx tsc --noEmit
+[no errors]
+```
+
+**E2E v prohlížeči:** odložené — frontend kontejner potřebuje rebuild
+aby se promítly nové komponenty + nový endpoint client-side flow.
+Po rebuildu happy-path test (lesson 1, schválně špatná odpověď →
+„Chci to dovysvětlit" → „Vysvětli mi to krok za krokem" → AI streaming
+response → další cvičení) je 5-minutový sanity check.
+
+### Out of scope této session
+
+- **Persistence chat historie.** Záměrně. Brief specifikuje
+  „session-only" — chat existuje jen v paměti React komponenty.
+  Při refresh stránky se historie ztratí. Pro MVP správně: jednodušší,
+  méně PII v DB, žádný GDPR retention concern.
+- **Anti-abuse beyond rate limit.** Žádný content moderation, žádný
+  prompt-injection guard. Risk acceptable pro thesis demo na 100
+  user sessions; pro produkci by bylo třeba přidat jailbreak
+  detection nebo pre-screen prompty.
+- **Multi-message threading per cvičení.** Každý chat je vázaný na
+  jedno cvičení; uživatel nemůže pokračovat v rozhovoru po
+  „Pokračovat". Záměrně — rate limit + UX simplicity.
+- **Frontend rebuild.** Naplánované jako oddělený krok mimo session
+  scope (deployment ne development).
+
+### Dojem
+
+- Auto mode uprostřed plánovací fáze byl zajímavý experiment.
+  Místo plánu jsem rozhodl rovnou (model ID, no thinking, no caching)
+  a šel kódovat. Risk: pokud bych zvolil špatně, znamenalo to revert.
+  Reward: 8 commitů za jednu session bez ping-pongu.
+- 4-fázový state machine přes tagged union je idiomatický TypeScript
+  pattern — TS compiler odmítne přístup k `phase.data` v `answering`
+  variantu. Bez unionů by to bylo `if (phase === "feedback" && data)
+  { ... }` everywhere, což je footgun.
+- SSE parsing v ReadableStream je verbosenější než EventSource API
+  ale flexibilnější (custom event types, custom retry logic).
+  EventSource by nepodpořil `credentials: "include"` cleanly.
+- Atomicita rate limitu přes UPSERT … RETURNING je elegant — jeden
+  query místo SELECT-then-UPDATE-or-INSERT. Pro thesis-tier traffic
+  by stačilo jednoduchý select+update; ale UPSERT je idiomatický
+  Postgres pattern a stojí za to ho ukázat.
+- KaTeX rendering během streamu „funguje by accident" díky
+  `renderError` z session 009. Partial `$\\frac{1}` failuje parsing,
+  fallback rendere raw text, a jak token přijde uzavírací `}$`,
+  parsing uspěje a re-renderuje jako pěkný zlomek. Žádný custom
+  „čekej až bude kompletní LaTeX" logika nebyla potřeba.
