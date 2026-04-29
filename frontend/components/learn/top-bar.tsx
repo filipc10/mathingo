@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Trophy } from "lucide-react";
 
 export function TopBar({
   streak,
@@ -19,6 +20,16 @@ export function TopBar({
           Mathingo
         </Link>
         <div className="flex items-center gap-3 text-sm font-bold">
+          <Link
+            href="/leaderboard"
+            aria-label="Žebříček"
+            className="text-muted-foreground transition-colors hover:text-primary"
+          >
+            <Trophy className="size-5" />
+          </Link>
+          <span aria-hidden className="text-muted-foreground">
+            ·
+          </span>
           <span className="flex items-center gap-1.5">
             <span aria-hidden>🔥</span>
             <span>{streak} dní</span>
