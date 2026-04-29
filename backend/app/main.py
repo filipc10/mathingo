@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, chat, content, health, leaderboard
+from app.api import auth, chat, content, health, leaderboard, users
 from app.config import settings
 
 app = FastAPI(title="Mathingo API", version="0.1.0")
@@ -21,3 +21,4 @@ app.include_router(auth.router, prefix="/auth")
 app.include_router(content.router)
 app.include_router(chat.router)
 app.include_router(leaderboard.router)
+app.include_router(users.router)
