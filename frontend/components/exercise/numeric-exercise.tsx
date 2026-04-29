@@ -1,18 +1,25 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 import { KaTeXRenderer } from "./katex-renderer";
+
+type Phase = "answering" | "feedback";
 
 export function NumericExercise({
   prompt,
   value,
   onChange,
+  phase = "answering",
 }: {
   prompt: string;
   value: number | null;
   onChange: (value: number | null) => void;
+  phase?: Phase;
 }) {
+  const frozen = phase === "feedback";
+
   return (
     <div className="space-y-6">
       <div className="text-xl font-bold leading-relaxed">
@@ -33,7 +40,12 @@ export function NumericExercise({
           }
         }}
         placeholder="Tvoje odpověď"
-        className="h-16 text-center text-2xl font-bold"
+        disabled={frozen}
+        readOnly={frozen}
+        className={cn(
+          "h-16 text-center text-2xl font-bold",
+          frozen && "cursor-not-allowed opacity-80",
+        )}
       />
     </div>
   );
