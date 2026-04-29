@@ -1858,3 +1858,96 @@ response → další cvičení) je 5-minutový sanity check.
   fallback rendere raw text, a jak token přijde uzavírací `}$`,
   parsing uspěje a re-renderuje jako pěkný zlomek. Žádný custom
   „čekej až bude kompletní LaTeX" logika nebyla potřeba.
+
+---
+
+## Session 012 — 2026-04-29 — Markdown rendering v AI chatu
+
+- **Prompt ID:** #12
+- **Iterací plánu:** 1 (plán schválen napoprvé)
+- **Uživatelských zpráv v session:** 2 (prompt + plán schválení)
+- **Commity v session:** **2** (1 feat + 1 docs)
+
+### Cíl
+
+Single UX bug fix ze session 011: AI generuje markdown (`**bold**`,
+`*italic*`), ale `KaTeXRenderer` ho prošel jako literal text. Uživatel
+viděl literal `**blíží**` místo **blíží**.
+
+### Implementace
+
+Dvoufázový parsing v jednom souboru
+(`frontend/components/exercise/katex-renderer.tsx`):
+
+1. **Pass 1 (LaTeX, beze změny):** split na `\$\$..\$\$|\$..\$`. Math
+   části → `<BlockMath>` / `<InlineMath>` s `renderError` fallbackem.
+2. **Pass 2 (markdown, nové):** pro každou non-math část split nejdřív
+   na `\*\*[^*]+\*\*` (bold), pak uvnitř non-bold kousků split na
+   `\*[^*]+\*` (italic).
+
+Helper `parseMarkdown` je **flat, ne recursive** — dva `String.split`
+volání. Recursion by byla potřeba jen pro libovolně vnořený markdown
+(nepodporujeme — AI dostává system prompt na 3-4 věty plain prose).
+
+### Edge cases (záměrně tolerovaná degradace)
+
+- **`**unclosed`** — bold regex vyžaduje closing `**`, takže se
+  segment propadne jako plain text. ✓ Žádoucí pro stream chunks
+  rozseknuté uprostřed `**`.
+- **`***triple***`** — bold regex nematchuje (vnitřek obsahuje `*`),
+  italic regex matchuje vnitřní `*triple*`, okolní `**` zůstanou
+  literal. Output: `**` *triple* `**`. Suboptimální ale neexploduje.
+- **`5 * 3`** — italic regex by matchnul `* 3 *` kdyby tam byly stars.
+  AI v matematickém kontextu používá LaTeX `\cdot`, ne literal `*`,
+  takže reálná kolize téměř nemožná.
+
+### React keys
+
+Tři úrovně `.map()`, každá s vlastním scope, takže prefixy nemusí
+být globálně unikátní:
+
+- Outer (LaTeX split) → klíče `0`, `1`, …
+- `parseMarkdown` → `b-${i}` (bold variant) NEBO `f-${i}` (fragment
+  obalující italic). Mutually exclusive per iteration → unikátní
+  uvnitř Fragmentu, ve kterém žijí.
+- Italic split → `i-${j}` mixované s unkeyed plain stringy. React
+  pro unkeyed siblings použije position fallback — funguje,
+  v console žádné warning.
+
+### Žádné nové dependencies
+
+Žádný markdown parser library (overkill pro 2 syntax markery). Vlastní
+regex split + JSX. ~30 řádků navíc oproti session 011 implementaci.
+
+### Verifikace
+
+- Frontend typecheck: `npx tsc --noEmit` clean
+- Production rebuild: `docker compose -f docker-compose.yml up -d
+  --build frontend` (frontend obraz recreated, ostatní services
+  pokračují)
+- Visual test: na uživateli — AI chat odpověď s `**slovo**` →
+  **slovo**, `*slovo*` → *slovo*, LaTeX zachován
+
+### Out of scope
+
+- **Code bloky** (` ``` `) — AI je negeneruje v krátkých matematických
+  vysvětleních
+- **Headings** (`#`, `##`) — AI je negeneruje
+- **Lists** (`- item`) — AI je negeneruje (system prompt explicit
+  vyžaduje 3-4 věty plain prose)
+- **Links** (`[text](url)`) — AI nemá přístup k URLs
+- **Backend změny** — žádné. AI dostává stejný system prompt, generuje
+  stejný markdown, frontend ho jen lépe rendere.
+
+### Dojem
+
+- Drobný UX bug s velkou viditelností — 30 řádků kódu, ale jediný
+  rozdíl mezi „AI píše literal asterisky jako buggy chatbot" a
+  „AI píše krásně formátovaný text".
+- Markdown podpora omezená pouze na bold + italic by byla v normálním
+  app overkill, ale tady stojí na 4-5 řádkové AI replies v Czech
+  prose. Kdyby AI začala generovat code blocks nebo headings,
+  rozšíření by bylo trivální (přidat další split fázi).
+- Bold před italic je důležité ordering decision — opačně by
+  `**slovo**` zmatchovalo italic regex jako `*slovo*` se zbytkovým
+  `*` na okrajích. Bold first kill tuhle ambiguity.
