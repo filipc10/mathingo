@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 from uuid import UUID
 
@@ -32,3 +33,6 @@ class MeResponse(BaseModel):
     first_name: str
     display_name: str
     daily_xp_goal: int
+    streak: int
+    xp_today: int
+    last_activity_date: date | None

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import get_db
 from app.dependencies import get_current_user
-from app.models import Course, MagicLinkToken, User
+from app.models import Course, DailyActivity, MagicLinkToken, Streak, User
 from app.schemas.auth import (
     MeResponse,
     OnboardingRequest,
@@ -136,8 +136,33 @@ async def onboarding(
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: User = Depends(get_current_user)) -> MeResponse:
-    return MeResponse.model_validate(user)
+async def me(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MeResponse:
+    streak = (
+        await db.execute(select(Streak).where(Streak.user_id == user.id))
+    ).scalar_one_or_none()
+
+    today = datetime.now(UTC).date()
+    xp_today_row = await db.execute(
+        select(DailyActivity.xp_earned).where(
+            DailyActivity.user_id == user.id,
+            DailyActivity.activity_date == today,
+        )
+    )
+    xp_today = xp_today_row.scalar_one_or_none() or 0
+
+    return MeResponse(
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        display_name=user.display_name,
+        daily_xp_goal=user.daily_xp_goal,
+        streak=streak.current_length if streak else 0,
+        xp_today=xp_today,
+        last_activity_date=streak.last_active_date if streak else None,
+    )
 
 
 @router.post("/signout")
