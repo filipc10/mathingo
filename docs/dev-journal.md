@@ -1211,3 +1211,185 @@ Python repr:  'Co intuitivně znamená zápis $\\lim_{x \\to 2} f(x) = 5$?'
   zajišťuje, že každý commit reprezentuje funkční change. Empty
   markers v session 004 by retrospektivně přidaly noise; v
   session 008 jsme se jim vyhnuli.
+
+---
+
+## Session 009 — 2026-04-29 — Backend evaluation API + KaTeX dependency
+
+- **Prompt ID:** #9
+- **Iterací plánu:** 1 (plán schválen napoprvé s explicit poznámkou
+  o `not isinstance(answer, bool)` requirement)
+- **Uživatelských zpráv v session:** 2 (prompt + plán schválení)
+- **Commity v session:** 5 (přesně dle plánu)
+
+### Cíl
+
+Tři logicky propojené backend infrastructure změny + jeden frontend
+dependency setup:
+1. Sanitize `GET /api/lessons/{id}` payload — skrýt `correct_index`
+   (multiple_choice) a `expected`/`tolerance` (numeric) z public response.
+2. `POST /api/lessons/{id}/submit` — auth-required batch evaluation
+   endpoint vracející per-exercise verdict + score summary.
+3. KaTeX dependency setup pro frontend (žádný runtime use yet).
+
+Žádné UI změny v této session, žádné DB změny.
+
+### Co fungovalo na první pokus
+
+- `sanitize_exercise_payload(exercise_type, payload)` helper — single
+  source of truth pro „co je safe vystavit klientovi". Aplikováno
+  v `get_lesson` přes explicit dict construction před `model_validate`.
+  Empirický check potvrdil že MC payload obsahuje jen `options` a numeric
+  je `{}`.
+- 5 nových Pydantic schémat pro submit (AnswerSubmission,
+  SubmissionRequest, ExerciseResult, ScoreSummary, SubmissionResponse).
+- Submit endpoint flow (lesson lookup, set equality validation,
+  per-answer evaluation, score aggregation) byl bez incidentu.
+- Auth gate (`Depends(get_current_user)`) → 401 bez cookie ✓.
+- Set inequality (chybějící odpověď) → 422 ✓.
+- 404 na unknown lesson ✓.
+- `npm install react-katex katex` na hostu prošel — react-katex 3.1.0
+  + katex 0.16.45 v dependencies, peer dep auto-resolved.
+- KaTeX CSS importovaný v `layout.tsx` přes `import "katex/dist/katex.
+  min.css"` — bundlovaný do produkčního CSS chunku (80 KB CSS bundle
+  obsahuje `font-family:KaTeX` selectors).
+
+### Co bylo potřeba opravit
+
+#### Bug: Pydantic 2 lax mode koercoval `true` → `1`, bypassing isinstance bool check
+
+Test 7 v e2e ověření: submit `{"answer": true}` pro multiple_choice
+exercise → očekávaný 422 → realita HTTP 200 s `user_answer: 1`,
+`correct: true` (protože correct_index byl 1).
+
+**Příčina:** `AnswerSubmission.answer: int | float | str` — Pydantic
+2 v lax módu (default) koercuje JSON booleans na ints. `True` → `1`
+(Python int) PŘED tím, než se _evaluate spustí. Můj `isinstance(
+user_answer, bool)` check kontroloval `isinstance(1, bool)` → `False`.
+Takže bool byl tichý okay.
+
+**Fix:** `answer: StrictInt | StrictFloat | str` (Pydantic strict
+variants). Strict variants reject bool at parse time. User submitter
+`true` dostane structured 422 listing all three union arms (int,
+float, str) a důvod neodmítnutí pro každý. Belt-and-suspenders:
+runtime `isinstance(answer, bool)` v `_evaluate` zůstává jako
+defensive check — pro případ že se schéma v budoucnu změní zpět.
+
+**Lekce:** Pydantic 2 default lax coercion je friendly pro JSON
+clients ale leakuje boolean → int conversion. Pro kritickou
+type-discrimination logiku používat StrictInt/StrictFloat. User
+explicit varoval v re-approval, ale praktické ověření přišlo až
+v test 7 — přesně proto patří empirické testy do plánu.
+
+### Rozhodnutí, která stojí za zaznamenání
+
+- **Single `ExerciseResponse` + `sanitize_exercise_payload` helper**
+  místo dvou Pydantic modelů (full vs public). Důvod: payload je
+  `dict[str, Any]` — Pydantic shape jen vrchní vrstvy. Dva modely
+  by jen zdvojily contract bez reálné type-safety výhody. Helper
+  je 5 řádek, snadno se testuje, single source of truth.
+- **Pydantic Union (`StrictInt | StrictFloat | str`) + runtime
+  isinstance check**. Discriminated union by potřebovala discriminator
+  field v request body — nemáme, exercise_type je inferovaný z DB
+  lookupu. Strict variants reject bool early (cleanest), runtime
+  check defensive ve `_evaluate`.
+- **Set equality validation pro submitted exercise_ids.** Žádné
+  chybějící, žádné navíc, žádné cizí UUID. 422 s `detail=
+  "answers_must_match_lesson_exercises"`. Defenzivní — zajišťuje, že
+  uživatel nemůže selektivně submitovat jen pohodlné odpovědi.
+- **Auth split: GET veřejné, POST submit auth-required.** Read-only
+  curriculum content nemá privacy sensitivity. Submit je per-user
+  akce → JWT cookie required. Konzistentní s session 005 patternem
+  pro auth-required state-changing endpointy.
+- **Explanation v ExerciseResult bez ohledu na correctness.** Per
+  user feedback: pedagogická hodnota explanation je v dokumentaci
+  postupu, ne jen v opravě chyby. Uživatel co odpověděl správně
+  stále chce vidět „proč" — utvrzení v technice.
+- **Žádný progress write v této session.** `lesson_attempts`,
+  `exercise_attempts` tabulky existují z session 004 ale write
+  do nich přijde s persistencí (prompt #11+). Dnes čistě
+  evaluation-without-side-effects.
+- **react-katex (ne MathJax) jako math renderer.** Bundle size
+  50 kB gz vs 200 kB, sync render bez FOUC, syntax coverage
+  pokrývá 4MM101 prompts (`\lim`, `\frac`, `\infty`, super/sub-
+  scripts). MathJax wider AMS-LaTeX support by byl unused weight.
+- **Sanitization na serialization layer** (api/content.py),
+  ne na model layer. Server interní logika čte `exercise.payload`
+  raw přes ORM (potřebuje `correct_index` pro evaluation). Public
+  expozice je oddělený concern — happens at HTTP response build
+  time, ne na ORM property level.
+
+### Použité verze (přírůstky)
+
+| Komponenta | Verze |
+|---|---|
+| react-katex | 3.1.0 |
+| katex | 0.16.45 |
+
+### Verifikační výstupy
+
+**Sanitization (per uživatelův explicit verifikační příkaz):**
+```
+$ curl /api/lessons/<lesson1> | jq '.exercises[0].payload'
+{"options": [...]}                      # ✓ no correct_index
+
+$ curl /api/lessons/<lesson1> | jq '.exercises[2].payload'
+{}                                      # ✓ no expected, no tolerance
+```
+
+**Submit endpoint matrix (8 e2e cases):**
+```
+1. ALL CORRECT (3/3)               → 200, all_correct=true ✓
+2. MIXED (1 correct, 2 wrong)      → 200, all_correct=false ✓
+3. NUMERIC TOLERANCE (7.0001)      → correct=true (within 0.001) ✓
+4. NUMERIC OUT OF TOLERANCE (7.01) → correct=false ✓
+5. SET INEQUALITY (2 of 3 answers) → 422 ✓
+6. TYPE MISMATCH (string for MC)   → 422 with detail ✓
+7. BOOL FOR MC (true)              → 422 (Pydantic StrictInt rejection) ✓
+8. UNKNOWN LESSON                  → 404 ✓
+no auth (test 0)                   → 401 ✓
+```
+
+**KaTeX bundle:**
+```
+$ curl /_next/static/chunks/<hash>.css | grep -c 'font-family:KaTeX'
+5+ matches                              # ✓ KaTeX styles in production CSS bundle
+$ curl -sI /_next/static/chunks/<hash>.css | grep content-length
+content-length: 80534                   # CSS bundle ~80 KB total
+```
+
+### Out of scope této session
+
+- **Žádný UI rendering cvičení** — `/learn` zůstává placeholder.
+  Lesson runner page (`/lesson/[id]`) přijde v promptu #10.
+- **Žádné progress persistence** — write do `lesson_attempts`,
+  `exercise_attempts` přijde s lesson runtime + per-user progress
+  tracking v promptu #11+.
+- **KaTeX deps installed, no usage yet** — InlineMath / BlockMath
+  komponenty neimportuje žádný soubor. Až prompt #10 začne renderovat
+  exercise prompts.
+- **Tests odložené** — pokračování DoD deviation z session 005.
+  E2e ověření přes curl s injected JWT pokrývá happy path
+  + 7 edge cases.
+
+### Dojem
+
+- Plán-execute flow byl hladký až do testu 7 (bool rejection),
+  který jsem v plánu měl jen jako mention ale ne jako test step.
+  Připomenutí, že empirické testy chytí to, co type system
+  v lax módu pustí.
+- StrictInt fix je kompaktní (jeden import + jeden řádek schémy)
+  ale významný — bez něj by byl celý bool defensive check ve
+  `_evaluate` zbytečný theatre. Pydantic 2 lax coercion je past,
+  která se v běžném code review snadno přehlédne.
+- Sanitization helper je hezký example „security boundary at the
+  serialization layer" patternu. Server-internal logic (evaluation)
+  čte raw `correct_index`, public response ho strippuje. Žádné
+  `if user_role == 'admin'` v jediné funkci — separation of concerns.
+- KaTeX setup je explicitní příprava bez okamžitého use case. Pro
+  thesis writeup: ukázka „add dependency in N-1 session, use it in N"
+  patternu — odděluje setup risk (npm install conflicts, build
+  break) od functionality risk (komponent rendering).
+- Set equality validation pro answers je drobnost ale defenzivně
+  cenná. Bez ní by uživatel mohl submitovat 2 z 3 odpovědí
+  a dostat partial score, což je nepochopitelné pro lesson UX.
