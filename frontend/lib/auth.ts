@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { apiUrl } from "./api";
+import { AvatarPalette, AvatarVariant } from "./avatars";
 
 export type CurrentUser = {
   id: string;
@@ -7,6 +8,8 @@ export type CurrentUser = {
   first_name: string;
   display_name: string;
   daily_xp_goal: number;
+  avatar_variant: AvatarVariant;
+  avatar_palette: AvatarPalette;
   streak: number;
   xp_today: number;
   last_activity_date: string | null;

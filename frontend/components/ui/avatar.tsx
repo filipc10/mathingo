@@ -2,16 +2,31 @@
 
 import Avatar from "boring-avatars";
 
-const PALETTE = ["#0073FF", "#22C55E", "#3B82F6", "#06B6D4", "#8B5CF6"];
+import {
+  AVATAR_PALETTES,
+  AvatarPalette,
+  AvatarVariant,
+  DEFAULT_AVATAR_PALETTE,
+  DEFAULT_AVATAR_VARIANT,
+} from "@/lib/avatars";
 
 export function UserAvatar({
   name,
   size = 40,
+  variant = DEFAULT_AVATAR_VARIANT,
+  palette = DEFAULT_AVATAR_PALETTE,
 }: {
   name: string;
   size?: number;
+  variant?: AvatarVariant;
+  palette?: AvatarPalette;
 }) {
   return (
-    <Avatar name={name} variant="beam" size={size} colors={PALETTE} />
+    <Avatar
+      name={name}
+      variant={variant}
+      size={size}
+      colors={[...AVATAR_PALETTES[palette]]}
+    />
   );
 }

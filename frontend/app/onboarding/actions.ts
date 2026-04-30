@@ -4,8 +4,11 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { apiUrl } from "@/lib/api";
+import { AVATAR_PALETTES, AVATAR_VARIANTS } from "@/lib/avatars";
 
 const ALLOWED_GOALS = new Set([10, 20, 40]);
+const ALLOWED_VARIANTS = new Set<string>(AVATAR_VARIANTS);
+const ALLOWED_PALETTES = new Set<string>(Object.keys(AVATAR_PALETTES));
 
 export async function onboardingAction(
   formData: FormData,
@@ -13,6 +16,8 @@ export async function onboardingAction(
   const firstNameRaw = formData.get("first_name");
   const displayNameRaw = formData.get("display_name");
   const goalRaw = formData.get("daily_xp_goal");
+  const variantRaw = formData.get("avatar_variant");
+  const paletteRaw = formData.get("avatar_palette");
 
   const firstName =
     typeof firstNameRaw === "string" ? firstNameRaw.trim() : "";
@@ -31,6 +36,12 @@ export async function onboardingAction(
     return { error: "Vyber jeden z denních cílů." };
   }
 
+  const variant = typeof variantRaw === "string" ? variantRaw : "";
+  const palette = typeof paletteRaw === "string" ? paletteRaw : "";
+  if (!ALLOWED_VARIANTS.has(variant) || !ALLOWED_PALETTES.has(palette)) {
+    return { error: "Vyber si avatar." };
+  }
+
   const cookieStore = await cookies();
   const session = cookieStore.get("mathingo_session");
   if (!session) {
@@ -47,6 +58,8 @@ export async function onboardingAction(
       first_name: firstName,
       display_name: displayName,
       daily_xp_goal: goal,
+      avatar_variant: variant,
+      avatar_palette: palette,
     }),
     cache: "no-store",
   });
