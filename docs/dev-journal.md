@@ -2514,3 +2514,126 @@ endpointy:
 - `PATCH /users/me` pro profile editaci
 - `POST /onboarding` (rozšířený) pro avatar selection
 - `GET /auth/me` (rozšířený) pro top-bar avatar render
+
+---
+
+## Session 016 — 2026-04-30 — Bug fixing: magic link + onboarding
+
+- **Prompt ID:** #16 (bug report z produkce)
+- **Iterací plánu:** 0 (bez plan mode — auto mode, dvě reportované chyby
+  fixnuty v pořadí, jak vyšly z logu)
+- **Uživatelských zpráv v session:** 3 (signin nefunguje pro nové maily
+  → "commit" → onboarding nefunguje → "commit" → "zapiš i journal")
+- **Commity v session:** 2 (1 backend fix + 1 frontend feature) + tento
+  journal entry
+
+### Cíl
+
+Vychytat dvě návazné chyby, které session #015 zanechala v end-to-end
+flow první registrace, ale které unit testy nezachytily:
+1. Magic-link verify pro nového uživatele havaroval 500 chybou.
+2. Onboarding submit vracel 422, protože frontend se nepřišel
+   doptat backendu na avatar fields.
+
+### Co bylo potřeba opravit
+
+1. **`/auth/verify` házel `NotNullViolationError` pro každého nového
+   uživatele.** Migrace `a1b2c3d4e5f6` přidala `avatar_variant` a
+   `avatar_palette` jako `NOT NULL` a po backfillu shodila server
+   defaulty — explicit hodnoty od té doby povinné při INSERTu. Verify
+   route ale vytvářel User s pouze `email`, `first_name=""`,
+   `display_name=""`, `daily_xp_goal=20`, `course_id=...` — bez avatar
+   sloupců. Každá první verifikace končila rollbackem celé transakce
+   (včetně `consumed_at`), takže token uživatel mohl použít znova
+   se stejným výsledkem až do expirace. Existující uživatelé nebyli
+   zasaženi (proto v reportu "pro některé maily").
+   Oprava: nastavit `avatar_variant="beam"`, `avatar_palette="blue"`
+   při insertu — stejný baseline, jaký migrace dala existujícím
+   řádkům. Onboarding tyto placeholdery beztak přepíše.
+   **Lekce:** Když migrace shodí server default na NOT NULL sloupci,
+   audit všech `INSERT INTO <table>` v codebase je povinný krok.
+   Pydantic schema neflagne missing field, pokud je `Optional` na
+   ORM modelu (a tady jen DB-level constraint — model má `nullable=False`,
+   ale Python-side default chyběl).
+
+2. **Onboarding form vracel 422 Unprocessable Entity.** Backend
+   `OnboardingRequest` z #015 vyžaduje `avatar_variant` + `avatar_palette`
+   jako Literal types, ale frontend form (a action) tato pole vůbec
+   neexistovala. Toast "Něco se nepovedlo. Zkus to znovu." bez další
+   diagnostiky. Frontend taky neměl mapping `palette name → barvy`,
+   `UserAvatar` měl hardcoded variant `"beam"` a single palette,
+   `CurrentUser` type ignorovalo avatar fields. Tj. avatar feature byla
+   half-built: backend řekl že je hotová, frontend o ní nevěděl.
+   Oprava — kompletní wiring v jednom commitu:
+   - `lib/avatars.ts` — single source of truth pro `AVATAR_VARIANTS`
+     (6 hodnot) a `AVATAR_PALETTES` (5 hodnot, každá s 5 hex barvami).
+     Stejné názvy jaké drží DB check constraint, takže invariant je
+     enforced FE→BE→DB.
+   - `UserAvatar` přijímá `variant` + `palette` props s defaults
+     (backward-compatible — existing call sites bez změny).
+   - `CurrentUser` type extended o oba fieldy.
+   - Onboarding form: live preview avataru + 6-button variant picker
+     + 5-button palette picker (každý button ukazuje 5 swatches v dané
+     paletě). Preview reaguje na změnu přezdívky (boring-avatars
+     hashuje name → seed).
+   - Onboarding action: validuje variant/palette proti allow-listu
+     před POST (defense-in-depth, server odmítne stejně).
+   **Lekce:** Když backend extension landne před frontend wiring,
+   první registrace v dev/produkci je e2e test — a ten v #015 nikdo
+   neproběhl. End-to-end smoke (signin → verify → onboarding → /learn)
+   na novém e-mailu by oba bugy zachytil v session #015.
+
+### Verifikace na produkci
+
+```
+# Magic-link verify (po fixu): 200 OK redirect na /onboarding
+INFO: 172.18.0.4:33868 - "GET /auth/verify?token=… HTTP/1.1" 302 Found
+
+# Onboarding submit (před frontend fixem): 422
+POST /auth/onboarding HTTP/1.1" 422 Unprocessable Entity
+
+# Po frontend fixu: build prošel, image přebuilděn, kontejner
+# nahrazen — `Ready in 230ms`. Smoke test na produkci dělá uživatel.
+```
+
+### Out of scope
+
+- **Avatar v leaderboard / topbar render.** UserAvatar už podporuje
+  variant/palette, ale call sites v `app/leaderboard` a topbaru zatím
+  pasují default `"beam"`/`"blue"`. Wiring přijde, až bude `/api/users/me`
+  i `/api/leaderboard` returns konzumovat. Nesouvisí s onboarding flow.
+- **End-to-end test pro auth flow.** Session #015 přidala backend
+  smoke test infra (conftest.py). Auth flow test by vyžadoval
+  email-stub + token capture mechanismus — non-trivial a mimo scope
+  bug-fixing session. Manuální verifikace přes UI dostatečná pro teď.
+
+### Dojem
+
+- **Auto mode + krátký feedback loop.** Uživatel reportoval chybu →
+  log → diagnose → fix → rebuild → "commit" → další chyba ve
+  followupu. Tři commits v session, žádné plan mode. Pro obvious bug
+  fixes s jasným signálem v logu (NotNullViolationError, 422) je
+  to správný režim.
+- **Migrace bez "auditu call-sites" je past.** `a1b2c3d4e5f6` byla
+  čistá DB-level migrace, ale tichá změna v contractu (server default
+  pryč → každý INSERT musí explicit). Pre-flight checklist u příští
+  podobné migrace: grep `INSERT INTO users\|User\\(` na všechny
+  call sites v aplikační vrstvě.
+- **"Half-built feature" anti-pattern.** Backend rozšířený o avatar
+  fields v session #015 šel do main bez frontend consumption. Týden
+  předem to fungovalo (existující uživatelé měli backfilled hodnoty),
+  ale první nová registrace narazila. V single-developer projektu
+  to je akceptovatelné riziko, v týmu by to bylo "merged broken main".
+- **Boring-avatars + palette mapping je čistý design.** Pojmenované
+  palety (blue/green/purple/sunset/mono) místo raw hex tuples drží
+  DB check constraint malý, frontend code čitelný a UI picker
+  semantically meaningful. Trade-off: přidat novou paletu znamená
+  migration + frontend update, ale to je explicit a auditable.
+
+### Status
+
+Onboarding flow je end-to-end funkční. Magic link → verify → form
+(jméno + přezdívka + avatar variant + palette + denní cíl) → /learn.
+Session #017 (profile page s drilldown statistik) může pokračovat
+podle plánu, frontend topbar/leaderboard avatar render je
+"nice-to-have" v parallel cleanup PR.
