@@ -95,6 +95,8 @@ async def verify(
             first_name="",
             display_name="",
             daily_xp_goal=20,
+            avatar_variant="beam",
+            avatar_palette="blue",
             course_id=course.id if course is not None else None,
         )
         db.add(user)
