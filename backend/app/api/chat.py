@@ -59,6 +59,23 @@ Pravidla:
 """
 
 
+def _format_answer(
+    exercise: Exercise, value: object
+) -> str:
+    """Render an answer in a form the LLM can reason about.
+
+    For multiple_choice the wire format is an integer index into
+    `payload["options"]`; passing the raw int leaves the model guessing
+    what the option says. Resolve it to the option text (with the index
+    in parentheses for traceability). Other types pass through.
+    """
+    if exercise.exercise_type == "multiple_choice" and isinstance(value, int):
+        options = exercise.payload.get("options") or []
+        if 0 <= value < len(options):
+            return f"{options[value]!r} (index {value})"
+    return str(value)
+
+
 def _exercise_context_text(
     *, exercise: Exercise, user_answer: object, correct_answer: object
 ) -> str:
@@ -66,13 +83,21 @@ def _exercise_context_text(
     message. Keeps the system prompt static so prompt-cache prefix stays
     stable across users (even if the cache minimum is far above what we
     send today, leaving the option open is cheap)."""
-    return (
-        "Cvičení (typ: "
-        f"{exercise.exercise_type}):\n{exercise.prompt}\n\n"
-        f"Moje odpověď: {user_answer}\n"
-        f"Správná odpověď: {correct_answer}\n\n"
-        "Pomoz mi pochopit, proč jsem to měl/a špatně."
+    parts = [
+        f"Cvičení (typ: {exercise.exercise_type}):\n{exercise.prompt}",
+    ]
+    if exercise.exercise_type == "multiple_choice":
+        options = exercise.payload.get("options") or []
+        rendered_options = "\n".join(
+            f"  {i}. {opt}" for i, opt in enumerate(options)
+        )
+        parts.append(f"Nabízené možnosti:\n{rendered_options}")
+    parts.append(
+        f"Moje odpověď: {_format_answer(exercise, user_answer)}\n"
+        f"Správná odpověď: {_format_answer(exercise, correct_answer)}"
     )
+    parts.append("Pomoz mi pochopit, proč jsem to měl/a špatně.")
+    return "\n\n".join(parts)
 
 
 async def _bump_chat_usage(
