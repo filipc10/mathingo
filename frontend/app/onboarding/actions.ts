@@ -71,5 +71,8 @@ export async function onboardingAction(
     return { error: "Něco se nepovedlo. Zkus to znovu." };
   }
 
-  redirect("/learn");
+  // After completing the profile, route through the notifications opt-in
+  // before /learn. The welcome page itself routes to /learn whether the
+  // user grants, denies, or skips, so this redirect never traps anyone.
+  redirect("/welcome-notifications");
 }
