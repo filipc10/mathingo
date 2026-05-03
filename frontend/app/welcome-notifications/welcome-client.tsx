@@ -72,7 +72,12 @@ export function WelcomeNotificationsClient({
       const reg = await navigator.serviceWorker.ready;
       const subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        // BufferSource cast — TS lib.dom narrows to ArrayBufferView<ArrayBuffer>
+        // but pushManager accepts a plain Uint8Array. Spec is more permissive
+        // than the type defs.
+        applicationServerKey: urlBase64ToUint8Array(
+          vapidPublicKey,
+        ) as BufferSource,
       });
 
       const subRes = await fetch("/api/push/subscribe", {
@@ -145,7 +150,7 @@ export function WelcomeNotificationsClient({
                   Klikni dole na <Share2 className="mx-1 inline size-4" />
                 </li>
                 <li>
-                  Vyber <strong>„Přidat na plochu"</strong>
+                  Vyber <strong>„Přidat na plochu“</strong>
                 </li>
                 <li>Otevři Mathingo z plochy a vrať se sem</li>
               </ol>
