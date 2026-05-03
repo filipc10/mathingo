@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Award, BookOpen, Flame, Pencil, Target } from "lucide-react";
 
 import { TopBar } from "@/components/learn/top-bar";
@@ -9,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { UserStats } from "@/lib/api";
 import type { CurrentUser } from "@/lib/auth";
 
+import { EditProfileModal } from "./edit-profile-modal";
 import { SectionBreakdown } from "./section-breakdown";
 import { TypeStatsBlock } from "./type-stats";
 
@@ -18,6 +20,7 @@ type Props = {
 };
 
 export function ProfileClient({ user, initialStats }: Props) {
+  const [editOpen, setEditOpen] = useState(false);
   const stats = initialStats;
 
   return (
@@ -44,7 +47,11 @@ export function ProfileClient({ user, initialStats }: Props) {
               @{user.display_name}
             </p>
           </div>
-          <Button variant="outline" size="lg" disabled>
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => setEditOpen(true)}
+          >
             <Pencil className="size-4" />
             Upravit
           </Button>
@@ -107,6 +114,18 @@ export function ProfileClient({ user, initialStats }: Props) {
           <SectionBreakdown sections={stats.sections} />
         </section>
       </main>
+
+      {editOpen && (
+        <EditProfileModal
+          user={user}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => {
+            // Server component re-fetches user + stats on full reload —
+            // simpler than threading the updated user back through state.
+            window.location.reload();
+          }}
+        />
+      )}
     </div>
   );
 }
