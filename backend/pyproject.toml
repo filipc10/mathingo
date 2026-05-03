@@ -16,6 +16,8 @@ dependencies = [
     "pyjwt>=2.10",
     "email-validator>=2.2",
     "anthropic>=0.40",
+    "pywebpush>=2.0.0",
+    "cryptography>=43.0.0",
 ]
 
 [dependency-groups]

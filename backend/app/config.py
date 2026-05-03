@@ -31,5 +31,12 @@ class Settings(BaseSettings):
     chat_daily_message_limit: int = 20
     chat_session_message_limit: int = 5
 
+    # VAPID (Web Push). Generate once via scripts/generate_vapid_keys.py and
+    # copy the values into .env. Both keys are paired — rotating one invalidates
+    # every existing push subscription, so they outlive deploys.
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_subject: str = "mailto:filipcupl20@gmail.com"
+
 
 settings = Settings()
