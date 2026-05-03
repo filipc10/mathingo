@@ -1,14 +1,23 @@
 import Link from "next/link";
 import { Trophy } from "lucide-react";
 
+import { UserAvatar } from "@/components/ui/avatar";
+import type { AvatarPalette, AvatarVariant } from "@/lib/avatars";
+
 export function TopBar({
   streak,
   xpToday,
   dailyXpGoal,
+  displayName,
+  avatarVariant,
+  avatarPalette,
 }: {
   streak: number;
   xpToday: number;
   dailyXpGoal: number;
+  displayName?: string;
+  avatarVariant?: AvatarVariant;
+  avatarPalette?: AvatarPalette;
 }) {
   return (
     <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
@@ -40,6 +49,25 @@ export function TopBar({
           <span className="text-muted-foreground">
             {xpToday} / {dailyXpGoal} XP
           </span>
+          {displayName && (
+            <>
+              <span aria-hidden className="text-muted-foreground">
+                ·
+              </span>
+              <Link
+                href="/profile"
+                aria-label="Profil"
+                className="rounded-full transition-opacity hover:opacity-80"
+              >
+                <UserAvatar
+                  name={displayName}
+                  variant={avatarVariant}
+                  palette={avatarPalette}
+                  size={28}
+                />
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </header>

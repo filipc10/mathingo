@@ -41,6 +41,9 @@ export default async function LeaderboardPage() {
         streak={user.streak}
         xpToday={user.xp_today}
         dailyXpGoal={user.daily_xp_goal}
+        displayName={user.display_name}
+        avatarVariant={user.avatar_variant}
+        avatarPalette={user.avatar_palette}
       />
       <main className="mx-auto max-w-2xl px-6 py-10">
         <h1 className="mb-8 text-center text-3xl font-extrabold tracking-tight">

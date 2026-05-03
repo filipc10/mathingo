@@ -106,6 +106,9 @@ export default async function LearnPage() {
         streak={user.streak}
         xpToday={user.xp_today}
         dailyXpGoal={user.daily_xp_goal}
+        displayName={user.display_name}
+        avatarVariant={user.avatar_variant}
+        avatarPalette={user.avatar_palette}
       />
 
       <main className="mx-auto max-w-3xl px-6 py-12">
