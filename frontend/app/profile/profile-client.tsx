@@ -9,6 +9,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { UserStats } from "@/lib/api";
 import type { CurrentUser } from "@/lib/auth";
 
+import { TypeStatsBlock } from "./type-stats";
+
 type Props = {
   user: CurrentUser;
   initialStats: UserStats;
@@ -89,6 +91,13 @@ export function ProfileClient({ user, initialStats }: Props) {
             </p>
           </CardContent>
         </Card>
+
+        <section className="space-y-4">
+          <h2 className="text-xl font-extrabold tracking-tight">
+            Podle typu cvičení
+          </h2>
+          <TypeStatsBlock data={stats.by_type} />
+        </section>
       </main>
     </div>
   );
