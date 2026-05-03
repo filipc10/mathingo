@@ -23,7 +23,7 @@ export function ExerciseFeedback({
   onAskAi: () => void;
   showAskAi: boolean;
 }) {
-  const { correct, user_answer, correct_answer, explanation } = feedback;
+  const { correct, explanation } = feedback;
 
   return (
     <div className="space-y-4">
@@ -49,16 +49,6 @@ export function ExerciseFeedback({
           >
             {correct ? "Správně!" : "Bohužel špatně."}
           </p>
-          {!correct && (
-            <div className="text-sm">
-              <span className="text-muted-foreground">Tvoje odpověď: </span>
-              <span className="font-bold">{String(user_answer)}</span>
-              <span className="text-muted-foreground"> · Správně: </span>
-              <span className="font-bold text-accent">
-                {String(correct_answer)}
-              </span>
-            </div>
-          )}
           {explanation && (
             <div className="text-sm leading-relaxed text-muted-foreground">
               <KaTeXRenderer text={explanation} />
