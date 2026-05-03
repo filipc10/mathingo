@@ -9,7 +9,7 @@ because they're feature endpoints, not auth state.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import case, func, select
+from sqlalchemy import case, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -21,12 +21,16 @@ from app.models import (
     ExerciseAttempt,
     Lesson,
     LessonAttempt,
+    NotificationPreferences,
+    PushSubscription,
     Section,
     Streak,
     User,
 )
 from app.schemas.user import (
     LessonStats,
+    NotificationPreferencesResponse,
+    NotificationPreferencesUpdate,
     SectionStats,
     TypeStats,
     UserStats,
@@ -289,4 +293,96 @@ async def get_my_stats(
         sections=sections,
         by_type=by_type,
         last_active_date=last_active_date,
+    )
+
+
+async def _get_or_create_prefs(
+    user: User, db: AsyncSession
+) -> NotificationPreferences:
+    """Return the user's preferences row, creating it on first read.
+
+    The migration backfill seeded existing users, but a defensive
+    lazy-create keeps this resilient if a row was deleted (e.g. via
+    a future cleanup) or never seeded for some reason.
+    """
+    existing = (
+        await db.execute(
+            select(NotificationPreferences).where(
+                NotificationPreferences.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    prefs = NotificationPreferences(
+        user_id=user.id,
+        enabled=False,
+        time_slot="morning",
+        daily_max=1,
+    )
+    db.add(prefs)
+    await db.flush()
+    return prefs
+
+
+async def _has_push_subscription(user: User, db: AsyncSession) -> bool:
+    return bool(
+        (
+            await db.execute(
+                select(
+                    exists().where(PushSubscription.user_id == user.id)
+                )
+            )
+        ).scalar()
+    )
+
+
+@router.get("/me/notifications", response_model=NotificationPreferencesResponse)
+async def get_my_notification_preferences(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> NotificationPreferencesResponse:
+    prefs = await _get_or_create_prefs(current_user, db)
+    has_sub = await _has_push_subscription(current_user, db)
+    await db.commit()
+    return NotificationPreferencesResponse(
+        enabled=prefs.enabled,
+        time_slot=prefs.time_slot,  # type: ignore[arg-type]
+        has_push_subscription=has_sub,
+    )
+
+
+@router.patch(
+    "/me/notifications", response_model=NotificationPreferencesResponse
+)
+async def update_my_notification_preferences(
+    payload: NotificationPreferencesUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> NotificationPreferencesResponse:
+    """Partial update of notification preferences.
+
+    The endpoint never refuses an `enabled=true` write even if the user
+    has no push subscription — the stale flag is harmless because the
+    daily eligibility query also requires EXISTS push_subscription, so
+    no notification will ever be sent. Keeping the write side simple
+    avoids a class of "I clicked the toggle and it bounced back" UX bugs.
+    """
+    prefs = await _get_or_create_prefs(current_user, db)
+
+    if payload.enabled is not None:
+        prefs.enabled = payload.enabled
+    if payload.time_slot is not None:
+        prefs.time_slot = payload.time_slot
+
+    await db.commit()
+    await db.refresh(prefs)
+
+    has_sub = await _has_push_subscription(current_user, db)
+
+    return NotificationPreferencesResponse(
+        enabled=prefs.enabled,
+        time_slot=prefs.time_slot,  # type: ignore[arg-type]
+        has_push_subscription=has_sub,
     )

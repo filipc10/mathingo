@@ -63,3 +63,17 @@ class UserUpdateRequest(BaseModel):
 
 class UserUpdateResponse(BaseModel):
     status: str
+
+
+SlotLiteral = Literal["morning", "noon", "evening"]
+
+
+class NotificationPreferencesResponse(BaseModel):
+    enabled: bool
+    time_slot: SlotLiteral
+    has_push_subscription: bool
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    enabled: bool | None = None
+    time_slot: SlotLiteral | None = None
