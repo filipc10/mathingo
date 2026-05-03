@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { UserStats } from "@/lib/api";
 import type { CurrentUser } from "@/lib/auth";
 
+import { SectionBreakdown } from "./section-breakdown";
 import { TypeStatsBlock } from "./type-stats";
 
 type Props = {
@@ -97,6 +98,13 @@ export function ProfileClient({ user, initialStats }: Props) {
             Podle typu cvičení
           </h2>
           <TypeStatsBlock data={stats.by_type} />
+        </section>
+
+        <section className="space-y-4">
+          <h2 className="text-xl font-extrabold tracking-tight">
+            Podle témat
+          </h2>
+          <SectionBreakdown sections={stats.sections} />
         </section>
       </main>
     </div>
