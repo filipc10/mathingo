@@ -8,7 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import get_db
 from app.dependencies import get_current_user
-from app.models import Course, DailyActivity, MagicLinkToken, Streak, User
+from app.models import (
+    Course,
+    DailyActivity,
+    MagicLinkToken,
+    NotificationPreferences,
+    Streak,
+    User,
+)
 from app.schemas.auth import (
     MeResponse,
     OnboardingRequest,
@@ -173,6 +180,26 @@ async def onboarding(
     user.daily_xp_goal = payload.daily_xp_goal
     user.avatar_variant = payload.avatar_variant
     user.avatar_palette = payload.avatar_palette
+
+    # Seed notification preferences if absent. Default enabled=false —
+    # the explicit opt-in happens on /welcome-notifications. Existing
+    # users that came in via the migration backfill already have a row,
+    # so this is the path for genuinely-new accounts.
+    existing_prefs = await db.execute(
+        select(NotificationPreferences).where(
+            NotificationPreferences.user_id == user.id
+        )
+    )
+    if existing_prefs.scalar_one_or_none() is None:
+        db.add(
+            NotificationPreferences(
+                user_id=user.id,
+                enabled=False,
+                time_slot="morning",
+                daily_max=1,
+            )
+        )
+
     await db.commit()
 
     return OnboardingResponse(status="ok")
