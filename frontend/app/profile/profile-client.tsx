@@ -11,6 +11,7 @@ import type { UserStats } from "@/lib/api";
 import type { CurrentUser } from "@/lib/auth";
 
 import { EditProfileModal } from "./edit-profile-modal";
+import { NotificationPreferencesCard } from "./notification-preferences-card";
 import { SectionBreakdown } from "./section-breakdown";
 import { TypeStatsBlock } from "./type-stats";
 
@@ -115,6 +116,11 @@ export function ProfileClient({ user, initialStats }: Props) {
             Podle témat
           </h2>
           <SectionBreakdown sections={stats.sections} />
+        </section>
+
+        <section className="space-y-4">
+          <h2 className="text-xl font-extrabold tracking-tight">Notifikace</h2>
+          <NotificationPreferencesCard />
         </section>
       </main>
 
