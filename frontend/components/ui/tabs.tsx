@@ -45,7 +45,7 @@ function TabsTab({
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         "disabled:pointer-events-none disabled:opacity-50",
         "hover:text-foreground",
-        "data-[selected]:bg-primary data-[selected]:text-primary-foreground data-[selected]:shadow-sm",
+        "data-[active]:bg-primary data-[active]:text-primary-foreground data-[active]:shadow-sm",
         className,
       )}
       {...props}
