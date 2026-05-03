@@ -3186,3 +3186,207 @@ Session #19 může nasednout: scheduler logika kdy poslat reminder
 (reminder copy variant pool), cron / FastAPI background task / external
 trigger orchestrace. Session #20: notification preferences UI v profilu
 (opt-out, frequency, čas).
+
+---
+
+## Session 019 — 2026-05-03 — Notifikační logika + scheduler
+
+- **Prompt ID:** #19 (druhá ze tří plánovaných sessions na push
+  notifikace — tato pokrývá business logiku, scheduler, anti-dark-pattern
+  guardrails. Session #20 už jen UI v /profile a /welcome-notifications.)
+- **Iterací plánu:** 0 (auto mode, plán prezentován v textu, schválen "ok")
+- **Uživatelských zpráv v session:** 2 (prompt + schválení plánu)
+- **Commity v session:** 9 (8 backend + 1 docs) + tento journal entry
+
+### Cíl
+
+Postavit *logiku*, ne ještě UI. Konkrétně:
+
+1. DB schema pro notification preferences a sent-log.
+2. APScheduler v backend kontejneru, 3× denně cron joby.
+3. Pool 18 notifikačních textů s anti-dark-pattern principles.
+4. Eligibility query: kdo je opt-in, nemá dnes activity, má subscription,
+   nebyl už dnes notifikován.
+5. Manual admin trigger pro testing.
+
+UI změny (toggle v /profile, opt-in CTA na /welcome-notifications) jdou do session #20.
+
+### Architektura
+
+```
+notification_preferences
+├─ user_id      uuid UNIQUE fk users  ON DELETE CASCADE
+├─ enabled      bool default false                         ┐
+├─ time_slot    varchar(20)  CHECK ∈ {morning,noon,evening}│ opt-in default
+├─ daily_max    int default 1
+├─ created_at   timestamptz
+└─ updated_at   timestamptz
+
+notification_logs
+├─ user_id      uuid fk users  ON DELETE CASCADE  [(user_id, sent_date) idx]
+├─ sent_date    date                              ┐ UNIQUE
+├─ time_slot    varchar(20)                       │ (user_id,
+├─ text_used    text  (raw template, ne rendered) │  sent_date,
+├─ push_status  varchar(20)  default 'pending'    │  time_slot)
+└─ sent_at      timestamptz default now()
+```
+
+**Klíčové rozhodnutí: `enabled` default false + backfill INSERT v migraci.**
+Existing users (Filip + 9 mock + ~7 historických test users) dostali
+defaultní řádek s `enabled=false` přes `INSERT … ON CONFLICT DO NOTHING`
+v upgrade(). Tj. žádný uživatel nedostane push, dokud explicitně
+neklikne na `/welcome-notifications` (session #20). Anti-dark-pattern
+opt-in je uložen v DB layer, ne pouze v UI flow.
+
+### Anti-dark-pattern design choices (čtrnáctý bod do thesis kapitoly 6)
+
+**Notifikační systém byl navržen v explicit opozici vůči běžným
+dark patterns mobilních a webových aplikací.** Konkrétní guardrails
+implementované v této session:
+
+1. **Hard cap 1 notifikace/den vynucený UNIQUE constraint na DB úrovni.**
+   `UNIQUE (user_id, sent_date, time_slot)` na `notification_logs` znamená,
+   že defense-in-depth tří vrstev musí selhat (eligibility query, INSERT
+   guard, send orchestration), aby user dostal víc než jeden push za den.
+   Pokud by aplikační kód někdy obsahoval bug (např. retry loop), DB
+   ho zastaví IntegrityError.
+2. **Sleep window 22:00-08:00 UTC** je implicit ve výběru time slotů
+   (8:00, 12:00, 18:00 jsou všechny mimo) **a explicit guardrail** v
+   `notification_scheduler.py:_assert_outside_sleep_window`. Pokud
+   future config edit přidá slot v 23:30, scheduler odmítne při startu
+   FastAPI lifespan s ValueError — fail-fast, žádné silent night-pushes.
+3. **Opt-in default** (`preferences.enabled=false` po onboardingu i po
+   migraci backfill). User musí explicit povolit na `/welcome-notifications`.
+   Žádné skryté soft-defaults nebo "pojďme pro vás zapnout, pokud
+   souhlasíte" pattern.
+4. **Text pool design vyloučil:**
+   - **Streak fear** — žádné "Ztratíš 7-denní streak!" texty. Mathingo
+     nemá streak loss ani plnou simulaci streak freeze, takže by to bylo
+     i fakticky nepravdivé.
+   - **FOMO / social compare** — žádné "Spolužáci tě předbíhají v
+     leaderboardu" nebo "Anna právě dokončila Limity, kdy ty?"
+   - **Guilt trip** — žádné "Chybíš mi, vrať se" anthropomorfizing
+     aplikace a jejího vlastníka jako emocionálně zraněného agenta.
+   - **Vague urgency** — žádné "Last chance!" nebo "Jen dnes!"
+5. **7-day anti-repetition pool.** Picker filtruje `text_used` ze
+   `notification_logs` za posledních 7 dní; recently used templates
+   se nevolí znovu. Pokud user dostává 1 notifikaci/den a pool má 18
+   templates → po 7 dnech zbývá 11 čerstvých → habituation se snižuje
+   reálně. (Falls back na full pool jen když je celý 18-template pool
+   spotřebovaný za 7 dní, což při hard cap 1/day nemůže nastat.)
+6. **Anti-repetition keys na raw template, ne rendered string.** Picker
+   ukládá template s `{name}` placeholderem, ne hotový "Filipe, máš na
+   limity 5 minut?". Tj. dvě varianty s vokativem od různých uživatelů
+   se nepovažují za stejné, ale dvě varianty se stejným template **se
+   různými uživateli ano** — což je správně, recent_pool je per-user.
+
+Tyto principy jsou v záměrné opozici vůči praktikám referenčního
+produktu Duolingo, jehož push notifikace ("Sad owl misses you" meme
+pattern) jsou v UX literatuře klasifikovány jako problematické dark
+patterns.
+
+### Implementace (8 backend commitů)
+
+1. `feat(backend): add notification preferences and logs schema` —
+   model `app/models/notifications.py`, migrace s CHECK constraint
+   na time_slot, UNIQUE composite na logs, backfill INSERT pro
+   existing users (17 řádků).
+2. `feat(backend): add Czech vocative helper` — port frontend/lib/vocative.ts
+   pravidel do `app/services/vocative.py`. Žádný PyPI ekvivalent
+   `czech-vocative` neexistuje; 30-řádkový rule-based parser stačí
+   pro 18 templates v pool.
+3. `feat(backend): add notification text pool and picker` —
+   18 templates (6 with_name + 6 neutral + 6 question),
+   `pick_notification_text(user, recent_templates)` s dataclass return
+   type `NotificationCopy(title, body, template)`. RNG injectable pro
+   deterministické testy.
+4. `feat(backend): add notification service eligibility logic` —
+   `process_notification_slot(slot, db)` jako single entry point pro
+   scheduler i admin trigger. INSERT log row před send (UNIQUE guard),
+   pak send_push, UPDATE status. Subscriptions s 410 response se
+   smažou v stejné transakci.
+5. `feat(backend): wire APScheduler into FastAPI lifespan` —
+   `AsyncIOScheduler(timezone="UTC")` v `lifespan`, registrace 3 cron
+   triggerů (8/12/18 UTC), shutdown na FastAPI shutdown. In-memory
+   job store (žádný `SQLAlchemyJobStore`) — cron je stateless, lifespan
+   re-registers na restartu.
+6. `feat(backend): add admin endpoint for manual slot triggering` —
+   `POST /admin/notifications/trigger-now?slot=…` returns counts
+   `{slot, candidates, sent, skipped_already_logged, failed}` pro debug.
+   Auth-gated (jakýkoli logged-in user), ne admin-role-gated — MVP
+   nemá role, self-target je harmless.
+7. `feat(backend): create default notification prefs on onboarding` —
+   v `auth.onboarding` po user update INSERT `NotificationPreferences`
+   pokud row neexistuje. Idempotent re-onboardingu. Existing users
+   už mají row z migrace backfill, tato cesta je pro fresh accounts.
+8. `test(backend): cover notification picker, vocative, and slot eligibility` —
+   16 nových test cases ve 3 vrstvách (vocative table-driven, picker
+   s pinned RNG, slot processing s monkey-patched send_push).
+
+### End-to-end smoke test
+
+```
+Setup: test user s email "smoke19b-…@mathingo.local", first_name="Filip",
+       enabled=true, time_slot=morning, real EC keypair p256dh, fake FCM endpoint.
+
+POST /api/admin/notifications/trigger-now?slot=morning
+  → {"slot":"morning","candidates":1,"sent":0,"failed":1}
+  ↑ sent=0 protože FCM endpoint je fake → 4xx → push_service vrátí False
+  ↑ failed=1 protože log row se vytvořil a push se nepodařil
+
+DB: SELECT … FROM notification_logs WHERE user_id = …
+  → 1 row, time_slot=morning, text_used="Připraven/a na další lekci?",
+    push_status=failed
+
+POST /api/admin/notifications/trigger-now?slot=morning  (re-trigger)
+  → {"slot":"morning","candidates":0,"sent":0}
+  ↑ candidates=0 protože eligibility query exclude users s existing log row
+
+DB: count(*) WHERE user_id = … → 1  (žádný duplicitní row)
+
+Scheduler verification (jobs registered):
+  notification_slot_morning  → next run 2026-05-04 08:00:00+00:00
+  notification_slot_noon     → next run 2026-05-04 12:00:00+00:00
+  notification_slot_evening  → next run 2026-05-04 18:00:00+00:00
+
+pytest: 24 passed in 3.50s  (8 z minulých sessions + 16 nových)
+```
+
+### Co se naučilo
+
+- **APScheduler in-memory > persistent pro stateless cron.** První
+  návrh měl `SQLAlchemyJobStore` z promptu, ale pro pure-cron triggery
+  je persistent store overhead bez přidané hodnoty (next-run-time se
+  vždy přepočítává z `now()`, žádné runtime mutace seznamu jobů).
+  Lifespan re-registers při startu, takže po restartu je vše zase
+  na svém místě bez ztracených jobů.
+- **Nginx caches DNS resolution backendu.** Při rebuild backend
+  containeru se mu změnil interní docker-network IP, ale nginx měl
+  starou hodnotu cached → 502 Bad Gateway na `/api/*`. Workaround:
+  `docker compose restart nginx` po každém backend rebuild. Long-term
+  fix by byl `resolver` directive + variable proxy_pass v nginx config,
+  ale to by zase znamenalo runtime DNS lookup per-request — trade-off,
+  který za current MVP není potřeba řešit.
+- **Live-DB testy proti shared dev Postgres potřebují assertion na
+  test_user, ne global counts.** Jedno z prvních provedení testu měl
+  `assert result.sent >= 1` — passed by spuriously, kdyby v DB byli
+  jiní enabled users. Lepší filtr přes `WHERE user_id = test_user.id`,
+  test selže, pokud test_user konkrétně nedostal log row, bez ohledu
+  na zbytek DB.
+
+### Status
+
+Notifikační backend logic kompletní. Migrace aplikovaná, 17 existing
+users má opt-in default row. Scheduler registruje 3 cron joby při
+startu FastAPI lifespan. Manual admin trigger funguje, eligibility
+query filtruje správně, UNIQUE constraint blokuje duplicate notifications.
+24/24 pytest passing.
+
+První automatické cron firing: zítra (2026-05-04) v 08:00 UTC =
+09:00 SEČ / 10:00 SELČ. Žádný real user nemá `enabled=true` po deployi
+(opt-in default), takže cron projede prázdný kandidátský set.
+
+Session #20 dokončí push notification trilogii — UI toggle v `/profile`
+pro opt-in/out a slot picker, integrace `enableNotifications()` flow
+v `/welcome-notifications` aby kromě subscription také přepnul
+preferences.enabled na true.
