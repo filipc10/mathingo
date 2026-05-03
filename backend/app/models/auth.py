@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         Streak,
         UserLessonProgress,
     )
+    from app.models.push import PushSubscription
 
 
 class User(IDMixin, TimestampMixin, Base):
@@ -63,6 +64,11 @@ class User(IDMixin, TimestampMixin, Base):
         passive_deletes=True,
     )
     chat_usage: Mapped[list["ChatUsage"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    push_subscriptions: Mapped[list["PushSubscription"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

@@ -10,6 +10,7 @@ from app.models.progress import (
     Streak,
     UserLessonProgress,
 )
+from app.models.push import PushSubscription
 
 __all__ = [
     "Base",
@@ -29,4 +30,5 @@ __all__ = [
     "Streak",
     "DailyActivity",
     "ChatUsage",
+    "PushSubscription",
 ]
