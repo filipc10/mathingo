@@ -43,7 +43,7 @@ async def send_magic_link(email: str, token: str) -> None:
 
     Raises httpx.HTTPStatusError if Resend returns non-2xx.
     """
-    magic_url = f"{settings.app_url}/auth/verify?token={token}"
+    magic_url = f"{settings.app_url}/auth/click?token={token}"
     html_body, plain = _render(magic_url)
 
     async with httpx.AsyncClient(timeout=10.0) as client:
