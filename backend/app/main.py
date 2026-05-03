@@ -5,7 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, chat, content, health, leaderboard, push, users
+from app.api import admin, auth, chat, content, health, leaderboard, push, users
 from app.config import settings
 from app.services.notification_scheduler import schedule_daily_jobs
 
@@ -48,4 +48,5 @@ app.include_router(content.router)
 app.include_router(chat.router)
 app.include_router(leaderboard.router)
 app.include_router(push.router)
+app.include_router(admin.router)
 app.include_router(users.router)
