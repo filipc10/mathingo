@@ -141,9 +141,7 @@ are in **Czech**. Code, comments, commits, and internal documentation are in **E
 5. **Never delete existing tests.** If a test fails after a legitimate refactor,
    update the test in the same commit and explain why in the commit body.
 6. **Never bypass migrations** to alter the production database directly.
-7. **Never push directly to `main`** except for trivial documentation fixes —
-   use a PR.
-8. **Never log personally identifiable information** (email addresses, magic link
+7. **Never log personally identifiable information** (email addresses, magic link
    tokens) in plain text. Logs may include user UUIDs only.
 
 ---
@@ -176,10 +174,16 @@ docker compose exec frontend npm test
 ```
 
 ### Deployment
-- Push to `main` triggers CI on GitHub Actions.
-- On green CI, the workflow SSHs into the VPS, pulls the latest commit,
-  rebuilds containers, and runs migrations.
-- Manual rollback: `git revert` the offending commit and push.
+
+This project does NOT use CI/CD. Deploy is manual:
+
+1. Push commits to origin/main (`git push origin main`)
+2. SSH to VPS and rebuild: `cd /root/projects/mathingo && docker compose up -d --build`
+
+For dev journal continuity:
+- Push at the END of every session (after journal commit)
+- Rebuild only when changes affect runtime (backend/frontend code, configs)
+- Document any rebuild incidents in dev journal
 
 ---
 
@@ -190,7 +194,7 @@ A feature is considered complete when **all** of the following hold:
 - It is covered by at least one automated test (unit or integration).
 - The relevant section of `docs/prd.md` is updated.
 - The change is committed with a Conventional Commits message.
-- It builds in CI without warnings.
+- It builds locally without warnings (`docker compose up --build`).
 - Manually verified in the local Docker environment.
 
 ---
