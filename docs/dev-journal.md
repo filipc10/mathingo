@@ -3390,3 +3390,164 @@ Session #20 dokončí push notification trilogii — UI toggle v `/profile`
 pro opt-in/out a slot picker, integrace `enableNotifications()` flow
 v `/welcome-notifications` aby kromě subscription také přepnul
 preferences.enabled na true.
+
+---
+
+## Session 020 — 2026-05-03 — Notification preferences UI
+
+- **Prompt ID:** #20 (třetí a finální session na push notifikace —
+  user-facing nastavení v /welcome-notifications a /profile)
+- **Iterací plánu:** 0 (auto mode + uživatel mid-session přidal
+  pokyn "až sepíšeš plán, nečekej na moje OK" — žádný potvrzovací cyklus)
+- **Uživatelských zpráv v session:** 2 (prompt + clarifikace o
+  auto-pokračování po plánu)
+- **Commity v session:** 7 (1 backend + 4 frontend + 1 test + 1 docs)
+
+### Cíl
+
+Push notifikační systém **end-to-end komplet**. Po session #18 a #19
+backend uměl všechno (subscribe/unsubscribe, scheduler, eligibility,
+text pool), ale uživatel neměl jak vybrat slot ani vypnout notifikace
+bez SQL příkazu. Tato session uzavřela smyčku:
+
+1. Backend GET/PATCH `/users/me/notifications` pro user-facing prefs
+2. SlotPicker reusable komponenta (3 segmented options + ikony)
+3. Toggle vlastní (žádný shadcn Switch dep)
+4. /welcome-notifications phase=picking-slot po subscribe
+5. /profile sekce "Notifikace" — Toggle + SlotPicker s optimistic update
+
+### Architektura preferences write path
+
+```
+GET /api/users/me/notifications
+  → lazy-create row pokud neexistuje (defense vs. missing backfill)
+  → returns {enabled, time_slot, has_push_subscription}
+  → has_push_subscription: scalar EXISTS subquery in same fetch
+
+PATCH /api/users/me/notifications {enabled?, time_slot?}
+  → partial update; either field optional
+  → time_slot validated by Pydantic Literal at request time → 422
+  → enabled never gated on push_subscription presence
+```
+
+**Defense-in-depth:** PATCH `enabled=true` projde i když uživatel nemá
+push subscription. Důvod: eligibility query v scheduleru má
+`EXISTS push_subscription` clause, takže stale `enabled=true` row
+neudělá nic. Lepší než "I clicked the toggle and it bounced back" UX
+bug.
+
+### Anti-friction UX choices (patnáctý bod do thesis kapitoly 6)
+
+**Toggle disable:**
+- Žádný confirmation modal ("Jste si jisti?")
+- Žádný streak-loss warning ("Ztratíš svůj 7-denní streak!")
+- Žádný emocionální blackmail ("Nepřejeme si, abys odešel")
+- Tichý, instant, bez modal interruptu
+
+**Slot change:**
+- Žádný "Uložit" button — onChange → instant PATCH
+- Žádný success toast po každé změně
+- Optimistic UI update: state se přepne hned, server-state se synchronizuje
+  na pozadí, na error se rolluje zpět z předchozí verze
+
+**Permission state:**
+- Card ukazuje **buď** Toggle+Slot **nebo** "Povolit notifikace" CTA
+- Žádný fake-enabled stav, kdy by toggle vypadal aktivní ale notifikace
+  by nedorazily (kvůli chybějící push subscription)
+- Has-subscription check je transparent v UI, ne hidden state
+
+**Welcome flow:**
+- Po grant + subscribe nepřesměruje rovnou na /learn
+- Phase `picking-slot` s SlotPicker — second piece of consent
+  (kdy chci být rušen, ne jen jestli)
+- Failed PATCH po slot pick je tichý — uživatel už dal permission,
+  fail-open na "morning" default je lepší než stuck spinner
+
+Tyto principy jsou v záměrné opozici vůči retention-focused UI
+vzorům, kde disable flows úmyslně komplikují cestu ven (Instagram
+"jste si jisti, že chcete deaktivovat účet" multi-step → "vrátíte se
+za 30 dní automaticky"). Mathingo respektuje user-side svobodu jako
+**akademickou hodnotovou pozici**, ne jen UX detail.
+
+### Implementace (7 commitů)
+
+1. `feat(backend): add user notification preferences GET and PATCH` —
+   GET vrací `{enabled, time_slot, has_push_subscription}`, lazy-creates
+   row přes `_get_or_create_prefs`, has_sub přes `select(exists())`
+   subquery. PATCH partial update (oboje fields optional), nikdy
+   neblokuje na chybějící push_subscription.
+2. `feat(frontend): add SlotPicker segmented control` —
+   `components/notifications/slot-picker.tsx`. Role="radiogroup" +
+   role="radio" pro AT support na custom segmented control.
+   Ikony Sunrise/Sun/Moon, časy 8:00/12:00/18:00. Reused v welcome
+   flow i profile card.
+3. `feat(frontend): add Toggle switch component` —
+   `components/ui/toggle.tsx`. Vlastní implementace místo shadcn
+   Switch (který by drag-in @radix-ui jako top-level dep pro jeden
+   binary control). Role="switch" + aria-checked.
+4. `feat(frontend): show slot picker after permission grant in welcome flow` —
+   `welcome-client.tsx` rozšířen o `Phase` state machine
+   (intro → picking-slot → saving). Po subscribe success → phase
+   transition místo rovnou redirect. PATCH `{enabled:true, time_slot}`
+   pak redirect /learn.
+5. `feat(frontend): add notification preferences card to /profile` —
+   `notification-preferences-card.tsx`. Optimistic update s rollback
+   on error, conditional rendering podle has_push_subscription
+   (CTA na /welcome-notifications nebo settings).
+6. `test(backend): cover notification preferences endpoints` — 7 cases
+   (lazy-create, PATCH enabled, PATCH slot, PATCH combined, invalid
+   slot 422, empty body idempotent, has_subscription flag tracks
+   PushSubscription rows).
+7. `docs: journal session 020` (this entry).
+
+### End-to-end smoke (live deploy)
+
+```
+GET /api/users/me/notifications
+  → {"enabled":false,"time_slot":"morning","has_push_subscription":false}
+
+PATCH {"enabled":true}
+  → {"enabled":true,"time_slot":"morning","has_push_subscription":false}
+
+PATCH {"time_slot":"evening"}
+  → {"enabled":true,"time_slot":"evening","has_push_subscription":false}
+
+PATCH {"time_slot":"midnight"}
+  → 422 {"detail":[{"type":"literal_error",...,"msg":"Input should be
+       'morning', 'noon' or 'evening'"}]}
+
+GET (final)
+  → {"enabled":true,"time_slot":"evening","has_push_subscription":false}
+
+GET /welcome-notifications (no auth)  → 307 /signin
+GET /profile (no auth)                → 307 /signin
+
+pytest: 31 passed in 4.08s
+  (8 stats + 6 push + 16 notifications [session #19] + 7 prefs [this session])
+```
+
+### Status
+
+Push notifikační systém **kompletní end-to-end**:
+
+- PWA installable (manifest + sw.js + apple-meta) — session #18
+- VAPID + DB schema + subscribe/test endpoints — session #18
+- Welcome page s permission flow — session #18 (rozšířený zde)
+- Notification text pool + vocative — session #19
+- APScheduler s 3 cron joby + eligibility query — session #19
+- DB log s UNIQUE guard, 7-day anti-repetition — session #19
+- Default opt-in row na onboarding — session #19
+- User-facing GET/PATCH endpoints — **session #20**
+- SlotPicker + Toggle UI komponenty — **session #20**
+- Welcome flow s slot picking — **session #20**
+- /profile prefs card s optimistic update — **session #20**
+
+Z thesis pohledu: **15 explicit dokumentovaných lessons learned** v
+kapitole 6 (anti-dark-pattern principles, infrastruktura selhání,
+two-step magic link, idempotency, defense-in-depth na DB úrovni,
+opt-in defaults, anti-friction UX).
+
+Real user test: na další signin z mobilu user uvidí welcome flow,
+povolí notifikace, vybere slot. Další ráno (pokud nemá XP) v 9:00
+SEČ dorazí push notifikace s textem z poolu — třeba *"Filipe, máš na
+limity 5 minut? 🧮"*.
