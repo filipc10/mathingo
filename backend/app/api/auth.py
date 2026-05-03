@@ -15,6 +15,8 @@ from app.schemas.auth import (
     OnboardingResponse,
     SignInRequest,
     SignInResponse,
+    VerifyRequest,
+    VerifyResponse,
 )
 from app.services.auth import (
     create_session_jwt,
@@ -64,22 +66,60 @@ async def signin(
     return SignInResponse(status="sent")
 
 
-@router.get("/verify")
-async def verify(
+@router.get("/click")
+async def click(
     token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
+    """Idempotent magic-link landing.
+
+    Looks up the token by hash but never marks it consumed. Enterprise email
+    gateways (e.g. Microsoft Defender for VŠE inboxes) prefetch URLs in
+    incoming mail for malware scanning; if the GET endpoint consumed the
+    token, the gateway would burn it before the human ever clicked. Token
+    consumption happens only in POST /auth/verify, triggered by an explicit
+    user action on the /click page.
+    """
     digest = hash_token(token)
     result = await db.execute(
         select(MagicLinkToken).where(MagicLinkToken.token_hash == digest)
     )
     record = result.scalar_one_or_none()
 
+    if record is None:
+        return RedirectResponse(url="/signin?error=invalid", status_code=302)
+    if record.consumed_at is not None:
+        return RedirectResponse(url="/signin?error=already_used", status_code=302)
+    if record.expires_at < datetime.now(UTC):
+        return RedirectResponse(url="/signin?error=expired", status_code=302)
+
+    return RedirectResponse(url=f"/click?token={token}", status_code=302)
+
+
+@router.post("/verify", response_model=VerifyResponse)
+async def verify(
+    payload: VerifyRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> VerifyResponse:
+    """Consume a magic-link token, create the session cookie, return redirect.
+
+    Side-effecting on purpose — see the docstring on /auth/click for why GET
+    is split from POST.
+    """
+    digest = hash_token(payload.token)
+    result = await db.execute(
+        select(MagicLinkToken).where(MagicLinkToken.token_hash == digest)
+    )
+    record = result.scalar_one_or_none()
+
     now = datetime.now(UTC)
-    if record is None or record.consumed_at is not None or record.expires_at < now:
-        return RedirectResponse(
-            url="/signin?error=invalid_or_expired", status_code=302
-        )
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invalid")
+    if record.consumed_at is not None:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="already_used")
+    if record.expires_at < now:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="expired")
 
     record.consumed_at = now
 
@@ -105,10 +145,9 @@ async def verify(
     await db.refresh(user)
 
     needs_onboarding = user.first_name == "" or user.display_name == ""
-    redirect_url = "/onboarding" if needs_onboarding else "/learn"
-    response = RedirectResponse(url=redirect_url, status_code=302)
+    redirect_to = "/onboarding" if needs_onboarding else "/learn"
     _set_session_cookie(response, create_session_jwt(user.id))
-    return response
+    return VerifyResponse(redirect_to=redirect_to)
 
 
 @router.post("/onboarding", response_model=OnboardingResponse)

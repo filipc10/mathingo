@@ -13,6 +13,14 @@ class SignInResponse(BaseModel):
     status: str
 
 
+class VerifyRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=128)
+
+
+class VerifyResponse(BaseModel):
+    redirect_to: str
+
+
 class OnboardingRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
