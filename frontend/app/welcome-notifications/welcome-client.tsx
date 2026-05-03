@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Loader2, Share2 } from "lucide-react";
+import { Bell, Clock, Loader2, Share2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import {
+  SlotPicker,
+  type SlotValue,
+} from "@/components/notifications/slot-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { vocative } from "@/lib/vocative";
@@ -14,6 +18,8 @@ type DeviceState =
   | "ios-needs-install" // iOS Safari outside PWA — must Add to Home Screen first
   | "unsupported";
 
+type Phase = "intro" | "picking-slot" | "saving";
+
 export function WelcomeNotificationsClient({
   userFirstName,
 }: {
@@ -23,6 +29,8 @@ export function WelcomeNotificationsClient({
   const [deviceState, setDeviceState] = useState<DeviceState>("checking");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>("intro");
+  const [selectedSlot, setSelectedSlot] = useState<SlotValue>("morning");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -99,12 +107,33 @@ export function WelcomeNotificationsClient({
         throw new Error("subscribe_failed");
       }
 
-      router.push("/learn");
+      // Subscription saved. Don't redirect yet — let the user pick when
+      // they want the daily reminder. The slot is the second piece of
+      // consent: "yes, push is allowed" + "yes, here's when."
+      setLoading(false);
+      setPhase("picking-slot");
     } catch (e) {
       console.error(e);
       setError("Něco se nepovedlo. Zkus to znovu nebo pokračuj bez notifikací.");
       setLoading(false);
     }
+  }
+
+  async function saveSlotAndContinue() {
+    setPhase("saving");
+    try {
+      await fetch("/api/users/me/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ enabled: true, time_slot: selectedSlot }),
+      });
+    } catch {
+      // Silent failure: the user has already granted permission and
+      // subscribed; the slot defaults to "morning" server-side, and a
+      // failed PATCH at this point shouldn't strand them on the screen.
+    }
+    router.push("/learn");
   }
 
   function skip() {
@@ -115,6 +144,53 @@ export function WelcomeNotificationsClient({
     return (
       <main className="flex min-h-screen items-center justify-center px-4 py-8">
         <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </main>
+    );
+  }
+
+  if (phase === "picking-slot" || phase === "saving") {
+    return (
+      <main className="flex min-h-screen items-center justify-center px-4 py-8">
+        <Card className="w-full max-w-lg">
+          <CardContent className="space-y-6 py-2">
+            <div className="flex justify-center">
+              <div className="flex size-16 items-center justify-center rounded-full bg-accent/10">
+                <Clock className="size-8 text-accent" />
+              </div>
+            </div>
+
+            <div className="space-y-2 text-center">
+              <h1 className="text-2xl font-extrabold">
+                Kdy ti máme připomenout?
+              </h1>
+              <p className="text-muted-foreground">
+                Vyber jeden čas. Změnit ho můžeš kdykoliv v profilu.
+              </p>
+            </div>
+
+            <SlotPicker
+              value={selectedSlot}
+              onChange={setSelectedSlot}
+              disabled={phase === "saving"}
+            />
+
+            <Button
+              onClick={saveSlotAndContinue}
+              disabled={phase === "saving"}
+              className="w-full"
+              size="lg"
+            >
+              {phase === "saving" ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Ukládám…
+                </>
+              ) : (
+                "Pokračovat"
+              )}
+            </Button>
+          </CardContent>
+        </Card>
       </main>
     );
   }
