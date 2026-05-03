@@ -17,6 +17,15 @@ export const metadata: Metadata = {
   ),
   title: "Mathingo",
   description: "Procvičování matematiky ve stylu Duolinga.",
+  manifest: "/manifest.json",
+  // iOS Safari ignores the web manifest's `display: standalone` — it needs
+  // these legacy Apple meta tags to render Add-to-Home-Screen as a real
+  // PWA shell, which is the only mode where iOS allows Web Push at all.
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Mathingo",
+  },
 };
 
 export default function RootLayout({
