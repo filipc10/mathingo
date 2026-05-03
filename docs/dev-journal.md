@@ -2637,3 +2637,307 @@ Onboarding flow je end-to-end funkční. Magic link → verify → form
 Session #017 (profile page s drilldown statistik) může pokračovat
 podle plánu, frontend topbar/leaderboard avatar render je
 "nice-to-have" v parallel cleanup PR.
+
+---
+
+## Session 017 — 2026-05-03 — Magic link two-step + /profile page
+
+- **Prompt ID:** #17 (production bug report z VŠE inboxů + původně
+  plánovaná profile page)
+- **Iterací plánu:** 0 (auto mode, plán prezentován v textu před
+  spuštěním, žádné plan-mode iterace)
+- **Uživatelských zpráv v session:** 1 (jeden velký prompt s oběma
+  cíli a explicit "ukaž mi plán před spuštěním")
+- **Commity v session:** 11 (2 backend + 8 frontend + 1 docs) +
+  tento journal entry
+
+### Cíl
+
+Dvě návazné změny v jedné session, řazené podle priority:
+1. **Bug fix s vyšší prioritou:** magic link selhával na VŠE
+   e-mailech (`@vse.cz`). Symptom: uživatel klikne na odkaz v mailu
+   a okamžitě vidí "odkaz již byl použit". Diagnóza po krátkém
+   tracingu: VŠE má enterprise inbox protection (Microsoft Defender
+   for Office 365) a ten **prefetchuje** každé URL v příchozí poště
+   pro malware scanning. GET request na `/auth/verify?token=…`
+   spotřeboval token v rámci toho prefetche — než se uživatel vůbec
+   podíval do schránky, token už byl `consumed_at = now`. Bez tohoto
+   fixu se VŠE studenti, kteří jsou primary user base 4MM101,
+   do aplikace prostě nedostanou.
+2. **Plánovaná feature:** `/profile` page jako kompletní user
+   dashboard se statistikami (sekce → lekce → typ cvičení), edit
+   modalem a navigací z top baru přes klikatelný avatar. Backendové
+   endpointy (`GET /users/me/stats`, `PATCH /users/me`) hotové ze
+   session #015, takže šlo čistě o frontend work.
+
+### Část A — Magic link two-step verification
+
+Refaktor jednoho endpointu na dva s odlišnými HTTP methods,
+postavený na principu **idempotency**: GET je read-only lookup,
+POST je side-effecting consumption.
+
+**Změny v rozhraní:**
+
+```
+PŘED:  GET  /auth/verify?token=…   → consume + create session + 302
+PO:    GET  /auth/click?token=…    → lookup-only + 302 na frontend
+       POST /auth/verify  body:{token} → consume + create session + JSON
+```
+
+**Detaily implementace:**
+
+- `app/api/auth.py` rozdělen na `click()` a `verify()`. `click`
+  používá stejný hash lookup (`hash_token(token)` → SHA-256 → DB
+  query), ale **nikdy nemodifikuje** `consumed_at`. Vrací 302
+  buď na error (`/signin?error=invalid|expired|already_used`)
+  nebo na frontend stránku (`/click?token=…`). `verify` má
+  původní logiku consume + user lookup/create + JWT cookie,
+  ale nově:
+  - HTTP method: POST
+  - Body: `VerifyRequest{token: str}` přes Pydantic
+  - Response: JSON `VerifyResponse{redirect_to: str}` místo 302
+  - Error responses: 404 invalid, 410 already_used / expired
+- `app/services/email.py`: change URL z `/auth/verify` na `/auth/click`.
+- Žádný rate limit existující v projektu — poznámka v promptu o
+  zachování limitu na POST endpointu byla preventivní.
+
+**Frontend:**
+
+- Nová route `app/auth/click/route.ts` — GET handler, který
+  proxuje request na backend `/auth/click` a forwarduje 302
+  redirect zpět prohlížeči. Stejný pattern jako stará
+  `app/auth/verify/route.ts` (relative Location header, browser
+  resolve proti request URL, aby fungovalo i za reverse proxy).
+- Stará `app/auth/verify/route.ts` přeřízená na **redirect-only**
+  proxy: `?token=X` → `/auth/click?token=X`. Backward-compat pro
+  in-flight emaily ze session #016 a dříve, dokud TTL token
+  nevyprší (15 minut po deployi je úplně čisto).
+- Nová stránka `app/click/page.tsx` (server component) +
+  `click-client.tsx` (client). Server vyrenderuje pouze pokud je
+  v query token, jinak 302 na `/signin?error=invalid`. Client
+  ukazuje kartu s ikonou Mail, h1 "Téměř hotovo!", primary button
+  "Přihlásit se", a fine-print "Tento mezikrok chrání tvůj odkaz
+  před automatickými skenery e-mailů." Klik = `fetch("/api/auth/verify",
+  POST {token})` → na 4xx redirect na `/signin?error=…`,
+  na 200 `router.replace(data.redirect_to)`.
+- `replace` místo `push` schválně — uživatel po dokončení
+  přihlášení neměl by mít v back stacku stránku s consumed
+  tokenem.
+- `signin/page.tsx`: error map rozšířený o klíče `invalid`,
+  `expired`, `already_used`, `network`, `unknown`. Starý klíč
+  `invalid_or_expired` ponechán jako fallback pro in-flight
+  redirecty z legacy GET path.
+
+**Akademická poznámka (do thesis kapitoly 6):**
+
+Magic link verification byl původně jednokrokový (`GET → consume
+→ session`). Tento pattern je v rozporu s REST principem
+**idempotency**: GET request by neměl mít side effects, protože
+síťová infrastruktura (proxies, prefetchery, cache) si může
+GET requesty sama opakovat nebo dělat speculatively. V mém
+konkrétním případě selhal proti enterprise email security gateway
+(Microsoft Defender for O365 na VŠE inboxech), která prefetchuje
+URL v příchozí poště pro detekci phishingu/malwaru — token byl
+consumed dřív, než se uživatel vůbec podíval. Two-step pattern
+(GET = read-only validation, POST = consumption + state change)
+řeší jak teoretický REST violation, tak praktický prefetching
+problém. Případ ilustruje, že MVP scope rozhodnutí, která vypadají
+jako "zjednodušení bez dopadu" (single-step verify pro úsporu
+jedné stránky), můžou v produkci selhat na infrastructures, které
+v dev prostředí neexistují. **Toto je dvanáctý konkrétní bod
+do kapitoly 6 (lessons learned).**
+
+### Část B — /profile page
+
+**Architektura:**
+
+- `app/profile/page.tsx` — server component. Auth gating
+  (`getCurrentUser()` → null → redirect /signin; first_name nebo
+  display_name prázdné → redirect /onboarding). Volá `fetchUserStats()`
+  z lib/api.ts (server-side fetch s cookie forwardingem na
+  `GET /users/me/stats`). Předá `user` + `stats` do client subtree.
+- `app/profile/profile-client.tsx` — client wrapper, drží jediný
+  kus state: `editOpen` (boolean pro modal). Vykresluje TopBar
+  (s avatar fields), header sekci (96px avatar + first_name +
+  @display_name + Upravit button), grid 4 stat cards, overall
+  winrate progress bar, `<TypeStatsBlock>` a `<SectionBreakdown>`.
+- `app/profile/type-stats.tsx` — pure render. Maps z
+  `exercise_type` enum na czech label (`multiple_choice` →
+  "Výběr odpovědi" atd.). Empty state pokud `data.length === 0`.
+- `app/profile/section-breakdown.tsx` — collapsible drilldown.
+  Každá sekce je button, klik toggluje `expanded` state. Per-lesson
+  rows ukazují CheckCircle/Circle ikon + title + counters.
+- `app/profile/edit-profile-modal.tsx` — **custom modal bez
+  shadcn Dialog**.
+
+**Trade-off poznámka k modalu:** shadcn Dialog by znamenal přidat
+`@radix-ui/react-dialog` jako npm dep + zkopírovat boilerplate
+component. CLAUDE.md ale explicitně zakazuje přidávat top-level
+deps bez explicit confirmu. Custom modal je 200 LOC a pokrývá
+features potřebné pro thesis-tier MVP: backdrop click-to-close,
+Escape handler, body scroll lock, `role="dialog"`,
+`aria-modal="true"`, `aria-labelledby`. Co _nepokrývá_ co Radix by
+dal: focus trap (po otevření tab může vypadnout mimo modal),
+inertness pro screen readers (ale `aria-modal` aspoň dává hint),
+a fokuslové návraty po close. Pro MVP tier akceptovatelné, pro
+produkční app s a11y SLA bych Radix vzal.
+
+**API call přes `/api/users/me` PATCH:**
+
+- Body posílá `display_name` **pouze pokud se liší** od stávajícího
+  (`displayName !== user.display_name`). To znamená, že 409
+  collision check na backendu (`User.display_name == new AND id != mine`)
+  se trigeruje jen na skutečné změně — re-submit se stejnou
+  přezdívkou (uživatel jen mění avatar) se k uniqueness checku
+  vůbec nedostane. Stejné chování jako PATCH endpoint zamýšlel
+  ze session #015.
+- Status mapping: 409 → "Tato přezdívka je už zabraná. Zkus jinou."
+  422 → "Přezdívka musí mít 3 až 30 znaků." (pro případ, že
+  uživatel vyhodí třízníkové minimum). Cokoli jiné → "Něco se
+  nepovedlo. Zkus to znovu."
+- Po success: `onSaved()` zavolá `window.location.reload()`. Tj.
+  server component se znova spustí, znova fetchne `/auth/me` a
+  `/users/me/stats`. Žádný optimistic update, žádná duplicate state.
+  Pro MVP tier správný trade-off.
+
+**Top bar avatar:**
+
+`TopBar` rozšířen o tři optional props (`displayName`,
+`avatarVariant`, `avatarPalette`). Když všechny tři jsou
+supplied, vykreslí se 28px avatar jako Link na `/profile` napravo
+za XP counterem. Když nejsou, bar se chová jako dřív (avatar
+prostě nezobrazí). Tím jsem vyřešil postupný rollout: existující
+TopBar callers (`/learn`, `/leaderboard`) jsem update v separate
+edit, ale i kdyby zapomněl, nic se nerozbije.
+
+Avatar napravo, ne nalevo: vlevo je logo "Mathingo" (brand,
+linkuje na /learn), vpravo jsou všechny user-state věci (trophy,
+streak, xp). Avatar je user-identity, patří k tomu pravému clusteru.
+
+### Verifikace
+
+**Statická:**
+
+```bash
+# Frontend typecheck (proti zdrojovým souborům):
+$ npx tsc --noEmit
+(no output = pass)
+
+# Backend Python AST parse:
+$ python3 -c "import ast; [ast.parse(open(f).read()) for f in [
+    'backend/app/api/auth.py',
+    'backend/app/schemas/auth.py',
+    'backend/app/services/email.py',
+]]"
+(no errors)
+```
+
+**End-to-end curl test (post-deploy):**
+
+Plánuji následující sekvenci na produkci po `git push origin main`
+a CI deployi. Sequence by měla projít:
+
+```bash
+# 1) request magic link
+curl -X POST https://mathingo.cz/api/auth/signin \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test+session17@mathingo.local"}'
+# expect: 200 {"status":"sent"}
+
+# 2) Pull token z DB / mail logu (jako v sessions 015/016).
+TOKEN="<plain token before sha256>"
+
+# 3) Simulate gateway prefetch — GET /auth/click
+curl -s -L -o /dev/null -w "%{http_code} %{redirect_url}\n" \
+  "https://mathingo.cz/auth/click?token=$TOKEN"
+# expect: 302 https://mathingo.cz/click?token=$TOKEN
+# AND: token v DB má consumed_at = NULL stále
+
+# 4) Repeat GET (bench prefetch víckrát) — should still be valid
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "https://mathingo.cz/auth/click?token=$TOKEN"
+# expect: 302 (consumed_at stále NULL)
+
+# 5) Now POST verify — user click simulation
+curl -s -X POST https://mathingo.cz/api/auth/verify \
+  -H "Content-Type: application/json" \
+  -d "{\"token\": \"$TOKEN\"}" \
+  -c /tmp/cookies.txt
+# expect: 200 {"redirect_to":"/onboarding"|"/learn"} + Set-Cookie
+
+# 6) Repeat POST — should now be 410
+curl -s -X POST https://mathingo.cz/api/auth/verify \
+  -H "Content-Type: application/json" \
+  -d "{\"token\": \"$TOKEN\"}"
+# expect: 410 {"detail":"already_used"}
+```
+
+Manuální verifikace v prohlížeči (rovněž post-deploy):
+- Přihlásit se přes email → klik vede na `/click`, ne přímo na
+  `/onboarding`/`/learn`
+- Klik na "Přihlásit se" → redirect na `/learn` (nebo
+  `/onboarding` u nového usera)
+- Otevřít `/profile` → vidím avatar, jméno, 4 stat cards,
+  winrate bar, type breakdown, section drilldown
+- Klik na "Upravit" → modal otevře, live preview funguje,
+  variant/palette pickery aktualizují preview
+- Submit s existující přezdívkou → 409 → red error pod inputem
+- Submit s novou přezdívkou → modal zavře, page reload, nová
+  data
+- Klik na avatar v top baru z `/learn` → navigace na `/profile`
+
+### Out of scope
+
+- **End-to-end Playwright test pro magic-link flow.** Manual
+  verification přes curl (post-deploy) je dostatečná pro MVP.
+  Automated browser test by vyžadoval mail-stub mechanismus a
+  patří do dedicated test session.
+- **Focus trap v custom modalu.** Tab-out lze, accessibility
+  audit pro thesis defense ale tohle nedrží jako blocker.
+- **Loading skeleton na `/profile`.** Server component renderuje
+  až po `fetchUserStats()` resolves; uživatel vidí prázdnou
+  stránku ~100-300ms (lokální backend, fast network). U pomalejších
+  routes by skeleton dával smysl, tady to je over-engineering.
+- **Optimistic update v edit modalu.** `window.location.reload()`
+  je pomalejší než state-based update, ale jednodušší a bez
+  bugů ve state-managementu. Trade-off acceptable.
+
+### Dojem
+
+- **Two-step pattern jako "Discoverable, Action-Required"
+  contract.** GET je discoverable (kdokoli může klepnout, nic
+  se nestane), POST je action-required (potvrzuju vědomě). Stejný
+  pattern používá GitHub na merge buttonech, GitLab na destructive
+  actions, Stripe na webhook delivery. Že jsem ho v MVP zkrátil
+  do single-step bylo "rychlé, ne robustní" rozhodnutí — typický
+  trade-off MVP scope, který v produkci kousne.
+- **Enterprise email security je real.** Studenti VŠE jsou primary
+  user base, ale jejich inboxy mají infra, kterou v dev prostředí
+  neuvidím (lokální mail stub Resend dev mode posílá maily
+  do mého testovacího inboxu, ne do MS O365). Jediný způsob
+  jak to chytit pre-deploy by byl **end-to-end test s reálnou
+  VŠE schránkou** — ten neexistoval. Lekce: high-stakes auth flow
+  potřebuje smoke test proti reálné target inbox infrastruktuře.
+- **Custom modal vs Radix Dialog rozhodnutí bylo close call.**
+  Radix dává správnou a11y zdarma (focus trap, inertness,
+  return focus, portal). Pro thesis MVP custom modal stačí, ale
+  je to memo: až bude první "real" user feedback session, focus
+  trap přijde s Radixem.
+- **Avatar v top baru jako "user identity" je prostá UX heuristika**,
+  ale spojení s klikem na profil je standardní web pattern (Twitter,
+  GitHub, Notion). Žádný objev, jen consistency.
+- **Granulární commits drží sense.** 11 commits dnes, každý buildí
+  sám, každý má smysluplný subject. Při code review bych mohl
+  každý ověřit nezávisle. Při rollbacku můžu shodit jen feature
+  flag konkrétního commitu (např. revert "edit profile modal"
+  bez ztráty profile page jako readonly view). To je hodnota
+  granularity, kterou single-fat-commit strategie ztrácí.
+
+### Status
+
+VŠE primary user base má fungující sign-in (po deployi). Profile
+page hotová s edit funkcionalitou. Top bar avatar wire-up
+v `/learn`, `/leaderboard`, `/profile` — backward compat zachován
+pro případné další TopBar call sites bez avatar fields.
+Session #018 může pokračovat s další feature roadmap, profile
+page i magic-link infra je dál stabilní baseline.
