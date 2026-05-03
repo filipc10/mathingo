@@ -12,6 +12,7 @@ from app.models.base import Base, IDMixin, TimestampMixin
 if TYPE_CHECKING:
     from app.models.chat import ChatUsage
     from app.models.content import Course
+    from app.models.notifications import NotificationLog, NotificationPreferences
     from app.models.progress import (
         DailyActivity,
         LessonAttempt,
@@ -69,6 +70,17 @@ class User(IDMixin, TimestampMixin, Base):
         passive_deletes=True,
     )
     push_subscriptions: Mapped[list["PushSubscription"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    notification_preferences: Mapped["NotificationPreferences | None"] = relationship(
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    notification_logs: Mapped[list["NotificationLog"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,
