@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Nunito } from "next/font/google";
+import { SWRegister } from "@/components/sw-register";
 import { Toaster } from "@/components/ui/sonner";
 import "katex/dist/katex.min.css";
 import "./globals.css";
@@ -36,6 +37,7 @@ export default function RootLayout({
   return (
     <html lang="cs" className={`dark ${nunito.variable}`}>
       <body className="antialiased">
+        <SWRegister />
         {children}
         <Toaster />
       </body>
