@@ -2941,3 +2941,248 @@ v `/learn`, `/leaderboard`, `/profile` — backward compat zachován
 pro případné další TopBar call sites bez avatar fields.
 Session #018 může pokračovat s další feature roadmap, profile
 page i magic-link infra je dál stabilní baseline.
+
+---
+
+## Session 018 — 2026-05-03 — PWA + push notifikace (infrastructure)
+
+- **Prompt ID:** #18 (první ze tří plánovaných sessions na push
+  notifikační systém — tato pokrývá foundations: manifest, SW, VAPID,
+  DB, subscribe API, permission UX flow)
+- **Iterací plánu:** 0 (auto mode, plán prezentován v textu před
+  spuštěním, schválen jedním "OK")
+- **Uživatelských zpráv v session:** 2 (prompt + schválení plánu)
+- **Commity v session:** 11 (5 backend + 4 frontend + 2 fix) +
+  tento journal entry
+
+### Cíl
+
+Postavit *infrastructure*, ne ještě reminder logic ani preferences UI.
+Konkrétně:
+
+1. Aplikace instalovatelná jako PWA — manifest, ikona 192/512, Apple
+   meta tagy (iOS Safari povoluje Web Push **jen** pro PWA v standalone
+   módu).
+2. Backend umí ukládat subscriptions a posílat push messages přes VAPID.
+3. Frontend umí požádat o permission a zaregistrovat subscription.
+4. End-to-end ověření, že code path funguje (push payload opravdu doletí
+   k FCM, error handling vrací 410 → cleanup).
+
+Reminder texty + scheduler jdou do session #19, preferences UI do #20.
+
+### Architektura subscriptions
+
+```
+push_subscriptions
+├─ id            uuid pk
+├─ user_id       uuid fk users(id) ON DELETE CASCADE  [index]
+├─ endpoint      text                                   ┐
+├─ p256dh        text                                   │ unique
+├─ auth          text                                   │ (user_id,
+├─ device_label  varchar(100) null  ("iPhone","Android")│  endpoint)
+├─ user_agent    text null
+├─ created_at    timestamptz default now()
+└─ last_used_at  timestamptz null
+```
+
+Klíčové rozhodnutí: **UNIQUE (user_id, endpoint)** s upsert
+sémantikou. Browser může rotovat `p256dh`/`auth` při refresh
+subscription (např. po expiraci klíčů), ale endpoint URL zůstává
+stejný — INSERT…ON CONFLICT DO UPDATE na klíčových polích zachová
+jediný row místo nekonečné akumulace duplikátů. Multi-device přes
+různý endpoint = více řádků (laptop + iPhone = 2 rows).
+
+### VAPID keypair lifecycle
+
+VAPID (Voluntary Application Server Identification) je RFC 8292
+mechanismus, kterým server identifikuje sám sebe push službám
+(FCM, Mozilla Autopush, Apple). Generujeme jednou per environment
+přes `backend/scripts/generate_vapid_keys.py`, ukládáme do `.env`.
+
+**Klíčový lesson learned z této session:** pywebpush `Vapid.from_string`
+má specifický input formát, který *vypadá* jako PEM ale není:
+
+```py
+# z py_vapid/__init__.py
+pkey = private_key.encode().replace(b"\n", b"")
+key = b64urldecode(pkey)
+```
+
+První iterace generujícího skriptu výstupovala plný PEM s `-----BEGIN
+PRIVATE KEY-----` headery a literal `\n` escape sekvencemi pro .env
+multiline. To selhalo na `b64urldecode` (PEM headery nejsou base64).
+Fix: emit pouze **PKCS#8 DER body, base64url-encoded** (tj. obsah
+PEM bez headerů a newlines). Jedna řádka v .env, žádný escape needed.
+
+Public klíč jde do frontendu jako uncompressed EC point (65 bajtů,
+0x04 || X || Y, base64url) — to je formát, který `pushManager.subscribe`
+konzumuje jako `applicationServerKey`. Endpoint `/push/vapid-public-key`
+je **bez auth** záměrně, public key je z definice public.
+
+### Service Worker scope
+
+`frontend/public/sw.js` registrovaný z `/sw.js` má default scope `/`
+(celý origin). Worker dělá pouze:
+- `push` event → `self.registration.showNotification(title, options)`
+  s `tag: "mathingo-daily-reminder"` (dedupe, druhý reminder před
+  dismissem prvního ho nahradí, ne stack)
+- `notificationclick` event → focus existujícího Mathingo windowu
+  nebo open new tab
+
+**Žádný offline caching**, žádný fetch interception. Caching strategy
+je separate concern, který by zasloužil vlastní design pass —
+naivní cache-first by rozbil server components data freshness.
+
+### iOS PWA detection
+
+iOS Safari má historicky non-standardní way detekce standalone módu.
+Modern (iOS 16.4+) podporuje `matchMedia("(display-mode: standalone)")`,
+ale starší zařízení používala `navigator.standalone` boolean. Detekce
+musí pokrýt obojí:
+
+```ts
+const isStandalone =
+  window.matchMedia("(display-mode: standalone)").matches ||
+  (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+```
+
+### Anti-dark-pattern v permission flow
+
+**Toto je třináctý bod do thesis kapitoly 6 (lessons learned).**
+
+Permission flow v této session byl explicitně navržen v opozici vůči
+běžným dark patterns mobilních a webových aplikací. Konkrétně:
+
+1. **Žádný immediate prompt po prvním sign-in.** Praxe často
+   kritizovaná u Duolinga, Instagramu i TikToku — uživatel nově
+   přihlášený dostane permission prompt jako první screen, často
+   bez vysvětlení účelu. To produces vyšší opt-in rate krátkodobě,
+   ale dlouhodobě poškozuje důvěru a zvyšuje uninstall rate.
+   Naše pořadí: signin → onboarding (profile setup) → **dedicated
+   welcome-notifications stránka** s explicit kontextem → permission
+   prompt teprve po user gestu (klik na "Povolit notifikace").
+2. **Skip alternativa je vizuálně rovnocenná.** "Pokračovat bez
+   notifikací" je full-width Button stejné velikosti jako primary
+   CTA, ne skrytý malý link pod fold. Konzistence: oboje routují
+   na stejné `/learn`, takže neutrální skip path není trestaná.
+3. **Permission request jen on user gesture** (klik na CTA), nikdy
+   automaticky. Toto je i browser security best practice — automatic
+   `Notification.requestPermission()` bez gesta je dnes ignorovaná
+   v Chrome, Firefox i Safari, ale i kdyby fungovala, byla by špatný
+   UX.
+4. **Žádný re-prompt po denial.** Pokud user denies, `welcome-client.tsx`
+   ukáže neutralní info "Můžeš povolit kdykoliv v nastavení" — bez
+   retry button, bez nudge. Re-prompt je classic dark pattern,
+   pricing in user resistance.
+5. **Explicit vysvětlení účelu PŘED prompt.** Cardová text na
+   `/welcome-notifications`: *"Jednou denně ti pošleme krátké
+   upozornění — jen pokud ses ještě nestavil. Žádný spam, můžeš
+   změnit nebo vypnout kdykoliv."* Konkrétní frequency a "no spam"
+   commitment, ne marketingové fráze.
+
+Hodnotová pozice projektu: gamifikace ano, retention ano, ale
+**ne za cenu zneužívání dark patterns**. Notifikace by měly user
+servisovat, ne harassovat. Tato session uložila tu pozici do kódu —
+nejen jako diskuzi v thesis, ale jako konkrétní design decisions
+v `welcome-client.tsx:113-211`.
+
+### Implementace — backend (5 commitů)
+
+1. `feat(backend): add pywebpush dep and VAPID config` — pyproject.toml
+   + cryptography, settings (`vapid_private_key`, `vapid_public_key`,
+   `vapid_subject`), docker-compose.yml backend env, .env.example
+   placeholders, generate_vapid_keys.py.
+2. `feat(backend): add push_subscriptions table` — model + alembic
+   migrace `d4e5f6a7b8c9` s UNIQUE constraint a index na user_id.
+3. `feat(backend): add push delivery service` — push_service.send_push
+   wrapper. Returnuje True na success, False na 404/410 (subscription
+   gone), re-raise na ostatních chybách. RuntimeError pokud
+   `vapid_private_key` chybí (refuse-rather-than-noop).
+4. `feat(backend): add push subscribe/unsubscribe/test endpoints` —
+   pg_insert ON CONFLICT pattern, GET /push/vapid-public-key (no auth),
+   POST /push/test self-targeted (žádné cross-user push).
+5. `test(backend): cover push subscribe flow and idempotence` —
+   6 test cases včetně re-subscribe upsertu a prune cesty (monkey-patch
+   send_push → False, verify row deleted).
+
+### Implementace — frontend (4 commity)
+
+6. `feat(frontend): add PWA manifest and 192px icon` — manifest.json,
+   icon-192.png a icon-512.png z existing app/icon.png (Pillow přes
+   one-off python:3.12-slim container, ImageMagick na hostu nebyl).
+   layout.tsx metadata.manifest + appleWebApp config (iOS PWA support).
+7. `feat(frontend): register service worker for push handling` — sw.js,
+   SWRegister client component mounted v body root layoutu.
+8. `feat(frontend): add welcome-notifications permission flow` —
+   server page (auth-gated, redirect na /signin nebo /onboarding pokud
+   chybí profile) + welcome-client.tsx s device detection state machine
+   (`checking | supported | ios-needs-install | unsupported`).
+9. `feat(frontend): route onboarding through welcome-notifications` —
+   change redirect target z onboardingAction z `/learn` na
+   `/welcome-notifications`. Returning sign-ins (auth/verify) nadále
+   přímo na `/learn`.
+
+### Fixy během session
+
+- `fix(frontend): pass build for welcome-notifications client` —
+  next build chytl dvě věci: unescaped `"` v Czech inline copy
+  (eslint react/no-unescaped-entities) a TS strict narrowing
+  rejection `Uint8Array` jako `applicationServerKey` typu.
+  Cast na `BufferSource` (lib.dom typy jsou striktnější než spec).
+- `fix(backend): emit VAPID private key in pywebpush-friendly format` —
+  detail viz "VAPID keypair lifecycle" výše.
+
+### End-to-end smoke test
+
+Provedeno v dev container proti deployed nginx + production compose
+stack. Stejný stroj jako VPS (Claude Code běží na produkci).
+
+```
+GET  /api/push/vapid-public-key          → 200 {"key":"BA6Ahr…"}
+POST /api/push/subscribe (real p256dh)   → 200 sub_id=d133ef8f…
+POST /api/push/subscribe (rotated keys)  → 200 sub_id=d133ef8f…  (same id)
+DB:  SELECT … FROM push_subscriptions    → 1 row, device_label="Smoke3 Renamed"
+POST /api/push/test                      → 200 {"sent":0,"total":1}
+DB:  SELECT count(*) …                   → 0  (cleanup verified)
+GET  /welcome-notifications (no auth)    → 307 → /signin
+GET  /manifest.json                      → 200 application/json
+GET  /sw.js                              → 200 application/javascript
+GET  /icon-192.png                       → 200 image/png
+pytest                                   → 8 passed
+```
+
+Browser-side push delivery musí otestovat user manuálně po deploye:
+- Desktop Chrome / Firefox: open mathingo.cz, sign in, klik Povolit,
+  manuální curl POST /api/push/test, ověřit, že dorazí OS notifikace.
+- Android Chrome: stejný flow + install banner test.
+- iOS Safari: Add to Home Screen → otevřít z plochy (standalone) → sign
+  in → klik Povolit → ověřit notifikaci na lock screen. Bez iPhone
+  v shellu nelze automatizovat. Pokud failne, fix-forward v session #19/#20.
+
+### Co se naučilo
+
+- **pywebpush nemá PEM input.** Lekce dokumentace versus reality —
+  jedna z těch věcí, které vyřeší pět minut čtení source code místo
+  hodiny "proč to nefunguje".
+- **Real cryptographic test vectors ≠ libovolný string.** První smoke
+  test selhal nikoliv na VAPID, ale na tom, že fake `p256dh`
+  (libovolný base64) není validní bod na P-256 křivce. Pro test push
+  cestu je třeba generovat skutečný EC keypair. Backend pytest tohle
+  obchází přes monkey-patch send_push.
+- **Production compose neimplikuje volume mount.** dev compose mountuje
+  ./backend:/app pro hot reload; prod ne. Edits v běžícím kontejneru
+  přes docker cp nebo rebuild. Jednou jsem to zapomněl a chvíli pátral,
+  proč skript v kontejneru ukazuje starou logiku.
+
+### Status
+
+PWA installability + push subscription infrastructure stojí. End-to-end
+push delivery code path ověřena (FCM contact + 410 cleanup). 6 nových
+push tests + 2 stávající stats testy projdou. Žádné regrese v existing
+core flow (signin, onboarding, learn, profile, leaderboard).
+
+Session #19 může nasednout: scheduler logika kdy poslat reminder
+(vyhodnocení streak + last_active_date + user TZ), text generování
+(reminder copy variant pool), cron / FastAPI background task / external
+trigger orchestrace. Session #20: notification preferences UI v profilu
+(opt-out, frequency, čas).
