@@ -9,6 +9,11 @@ import {
 import { SigninForm } from "./signin-form";
 
 const ERROR_MESSAGES: Record<string, string> = {
+  invalid: "Tvůj odkaz není platný. Pošli si nový níže.",
+  expired: "Tvůj odkaz už vypršel. Pošli si nový níže.",
+  already_used: "Tento odkaz už byl použit. Pošli si nový níže.",
+  network: "Něco se nepovedlo. Zkus to prosím znovu.",
+  unknown: "Něco se nepovedlo. Zkus to prosím znovu.",
   invalid_or_expired:
     "Tvůj odkaz byl neplatný nebo už vypršel. Pošli si nový níže.",
 };
