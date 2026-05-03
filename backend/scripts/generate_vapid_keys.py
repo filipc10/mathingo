@@ -27,26 +27,29 @@ def _b64url(data: bytes) -> str:
 def main() -> None:
     private_key = ec.generate_private_key(ec.SECP256R1())
 
-    private_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
+    # pywebpush's Vapid.from_string strips newlines then base64url-decodes,
+    # so it expects the DER body of the PKCS#8 PEM, base64url-encoded —
+    # NOT the PEM with headers. This format is also single-line which
+    # pastes cleanly into .env.
+    private_der = private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
-    ).decode("ascii")
+    )
+    private_b64url = _b64url(private_der)
 
-    # Browsers want the raw 65-byte uncompressed point (0x04 || X || Y).
+    # Browsers want the raw 65-byte uncompressed point (0x04 || X || Y),
+    # base64url-encoded. This is what pushManager.subscribe consumes as
+    # applicationServerKey.
     public_raw = private_key.public_key().public_bytes(
         encoding=serialization.Encoding.X962,
         format=serialization.PublicFormat.UncompressedPoint,
     )
     public_b64url = _b64url(public_raw)
 
-    # The PEM is multiline, which doesn't paste cleanly into a .env file.
-    # Print as a single quoted string with literal \n so a copy-paste works.
-    private_pem_oneline = private_pem.replace("\n", "\\n").rstrip("\\n")
-
     print("# Paste these two lines into .env (overwrite existing VAPID_* values):")
     print()
-    print(f'VAPID_PRIVATE_KEY="{private_pem_oneline}"')
+    print(f"VAPID_PRIVATE_KEY={private_b64url}")
     print(f"VAPID_PUBLIC_KEY={public_b64url}")
     print()
     print("# Then restart the backend: docker compose restart backend")
