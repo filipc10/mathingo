@@ -18,6 +18,7 @@ dependencies = [
     "anthropic>=0.40",
     "pywebpush>=2.0.0",
     "cryptography>=43.0.0",
+    "apscheduler>=3.10.0",
 ]
 
 [dependency-groups]
