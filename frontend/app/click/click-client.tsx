@@ -66,11 +66,6 @@ export function ClickClient({ token }: { token: string }) {
           >
             {loading ? "Přihlašuji…" : "Přihlásit se"}
           </Button>
-
-          <p className="text-xs text-muted-foreground">
-            Tento mezikrok chrání tvůj odkaz před automatickými skenery
-            e-mailů.
-          </p>
         </CardContent>
       </Card>
     </main>
