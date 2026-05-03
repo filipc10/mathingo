@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { fetchUserStats } from "@/lib/api";
+import { fetchUserStats } from "@/lib/api-server";
 import { getCurrentUser } from "@/lib/auth";
 
 import { ProfileClient } from "./profile-client";

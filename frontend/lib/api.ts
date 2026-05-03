@@ -1,5 +1,3 @@
-import { cookies } from "next/headers";
-
 const isServer = typeof window === "undefined";
 
 const baseUrl = isServer
@@ -51,20 +49,3 @@ export type UserStats = {
   by_type: TypeStats[];
   last_active_date: string | null;
 };
-
-// Server-side fetch helper. Reads the session cookie from the request and
-// forwards it to the backend so /users/me/stats authenticates correctly.
-// Returns null on auth failure (401) so callers can redirect to /signin.
-export async function fetchUserStats(): Promise<UserStats | null> {
-  const cookieStore = await cookies();
-  const session = cookieStore.get("mathingo_session");
-  if (!session) return null;
-
-  const res = await fetch(apiUrl("/users/me/stats"), {
-    headers: { cookie: `mathingo_session=${session.value}` },
-    cache: "no-store",
-  });
-
-  if (!res.ok) return null;
-  return (await res.json()) as UserStats;
-}
