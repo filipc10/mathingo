@@ -1,22 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Bell, Clock, Loader2, Share2 } from "lucide-react";
+import { useState } from "react";
+import { Bell, Clock, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { IosInstallGuide } from "@/components/notifications/ios-install-guide";
 import {
   SlotPicker,
   type SlotValue,
 } from "@/components/notifications/slot-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useDeviceState } from "@/lib/use-device-state";
 import { vocative } from "@/lib/vocative";
-
-type DeviceState =
-  | "checking"
-  | "supported" // Android, desktop, iOS in PWA mode
-  | "ios-needs-install" // iOS Safari outside PWA — must Add to Home Screen first
-  | "unsupported";
 
 type Phase = "intro" | "picking-slot" | "saving";
 
@@ -26,36 +22,11 @@ export function WelcomeNotificationsClient({
   userFirstName: string;
 }) {
   const router = useRouter();
-  const [deviceState, setDeviceState] = useState<DeviceState>("checking");
+  const deviceState = useDeviceState();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("intro");
   const [selectedSlot, setSelectedSlot] = useState<SlotValue>("morning");
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    // Check both signals: matchMedia is the modern standard but iOS
-    // historically only set navigator.standalone. OR-ing them covers
-    // every browser version we support.
-    const isStandalone =
-      window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as Navigator & { standalone?: boolean }).standalone ===
-        true;
-    const isIOS =
-      /iPad|iPhone|iPod/.test(navigator.userAgent) &&
-      !(window as unknown as { MSStream?: unknown }).MSStream;
-    const supportsPush =
-      "serviceWorker" in navigator && "PushManager" in window;
-
-    if (!supportsPush) {
-      setDeviceState("unsupported");
-    } else if (isIOS && !isStandalone) {
-      setDeviceState("ios-needs-install");
-    } else {
-      setDeviceState("supported");
-    }
-  }, []);
 
   async function enableNotifications() {
     setLoading(true);
@@ -216,22 +187,7 @@ export function WelcomeNotificationsClient({
             </p>
           </div>
 
-          {deviceState === "ios-needs-install" && (
-            <div className="space-y-3 rounded-xl bg-muted p-4">
-              <div className="font-bold">
-                Pro iPhone potřebujeme jeden krok navíc:
-              </div>
-              <ol className="list-inside list-decimal space-y-2 text-sm">
-                <li>
-                  Klikni dole na <Share2 className="mx-1 inline size-4" />
-                </li>
-                <li>
-                  Vyber <strong>„Přidat na plochu“</strong>
-                </li>
-                <li>Otevři Mathingo z plochy a vrať se sem</li>
-              </ol>
-            </div>
-          )}
+          {deviceState === "ios-needs-install" && <IosInstallGuide />}
 
           {deviceState === "unsupported" && (
             <div className="rounded-xl bg-muted p-4 text-sm">
