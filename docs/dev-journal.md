@@ -3551,3 +3551,159 @@ Real user test: na další signin z mobilu user uvidí welcome flow,
 povolí notifikace, vybere slot. Další ráno (pokud nemá XP) v 9:00
 SEČ dorazí push notifikace s textem z poolu — třeba *"Filipe, máš na
 limity 5 minut? 🧮"*.
+
+---
+
+## Session 021 — 2026-05-04 — iOS install guide (graphic)
+
+- **Prompt ID:** #21 (UX polish — vizuální průvodce instalací PWA na
+  iPhone, plus iOS awareness v profile notification card)
+- **Iterací plánu:** 0 (auto mode + persistent pokyn z #20: plán →
+  rovnou implementace)
+- **Uživatelských zpráv v session:** 1 (prompt)
+- **Commity v session:** 5 (4 frontend + 1 docs)
+
+### Cíl
+
+Po session #20 byl notifikační flow funkční end-to-end, ale iOS uživatel
+viděl jen 3 textové bullet pointy s instrukcí "klikni Share, vyber
+Přidat na plochu, otevři z plochy". Pro studenta, který nikdy PWA
+neinstaloval, je to nedostatečné. Tato session přidala vizuální
+průvodce — inline SVG ilustrace tří kroků — a zároveň udělala
+profile notification card device-aware, aby na iOS Safari ukazovala
+guide místo CTA, který by stejně bouncenul zpět na `/welcome-notifications`.
+
+### Architektura
+
+```
+frontend/lib/use-device-state.ts          (NEW)
+  └─ useDeviceState(): "checking" | "supported" | "ios-needs-install" | "unsupported"
+
+frontend/components/notifications/ios-install-guide.tsx          (NEW)
+  └─ <IosInstallGuide />
+       ├─ <Step number={1}>  <ShareIconIllustration />     "Klikni na ikonu sdílení dole v Safari"
+       ├─ <Step number={2}>  <AddToHomeScreenIllustration />  "V menu vyber „Přidat na plochu"
+       └─ <Step number={3}>  <HomeScreenIllustration />     "Otevři Mathingo z plochy a vrať se sem"
+
+frontend/app/welcome-notifications/welcome-client.tsx          (MOD)
+  ├─ inline detection useEffect → useDeviceState() hook
+  └─ <ol> bullets pro ios-needs-install → <IosInstallGuide />
+
+frontend/app/profile/notification-preferences-card.tsx          (MOD)
+  └─ if (!has_push_subscription)
+       └─ if (deviceState === "ios-needs-install") → <IosInstallGuide />
+       └─ else → existing "Povolit notifikace" CTA na /welcome-notifications
+```
+
+### Klíčové designové detaily SVG
+
+**`currentColor` + Tailwind text utility = automatický light/dark mode.**
+
+Žádný hex kód v SVG markup. Strategie:
+- Wrapping container drží neutrální `text-muted-foreground`
+- Accent paths v `<g className="text-primary">` — `text-primary` nastaví
+  CSS `color: var(--primary)` v té podstrome, descendants resolvují
+  `currentColor` na primary
+- Dimmed paths: `fill="currentColor"` + `opacity="0.35"`
+
+Výsledek: žádný `dark:` modifier nebo conditional render — SVG funguje
+v light i dark mode bez extra kódu. CSS variables (`--primary`,
+`--muted-foreground`) jsou definované v `app/globals.css` pro oba módy.
+
+**`viewBox="0 0 64 64"` napříč všemi třemi ilustracemi.** Stejné
+měřítko, předvídatelné vykreslení v 64px slot containeru. `size-12`
+(48px display) ponechává 8px padding kolem obsahu uvnitř Step row.
+
+**`aria-hidden` na všech SVG.** Význam je redundantně sdělen
+textovým popiskem napravo (`description` prop ve `Step`); screen
+reader by v opačném případě číslo + popis + grafický noise stack
+nesourodě.
+
+### Anti-installation-pressure (šestnáctý bod do thesis kapitoly 6)
+
+**Při návrhu byl zvážen a odmítnut persistent banner napříč aplikací.**
+
+Pattern, který je často využívaný v native-first webových aplikacích:
+sticky toast nebo banner na každé stránce ve stylu *"Pro nejlepší
+zážitek přidej Mathingo na plochu →"*. Tato class patterns je v UX
+literatuře klasifikovaná jako **installation pressure dark pattern** —
+opakovaná žádost o akci, kterou uživatel třeba aktivně neodmítl, jen
+ignoroval, čímž je vytvářen pseudo-souhlasný klimat ("vždyť ses tomu
+nebránil").
+
+Místo toho byl zvolen princip **"instrukce jednou, kvalitně, na
+správném místě"**: install guide se objeví výhradně tam, kde uživatel
+explicit zkoumá notifikace:
+
+- `/welcome-notifications` — stránka navštěvovaná organicky po onboardingu;
+  iOS uživatel vidí guide místo pre-install CTA.
+- `/profile` notification card — uživatel sám otevřel profil a srolloval
+  k sekci Notifikace; pokud je na iOS Safari bez subscription, vidí
+  guide v contextu, kde guide hledá.
+
+Žádná `/learn`, `/leaderboard`, `/lesson/...`, ani `/onboarding` stránka
+nebanneruje na install. Záměrné — uživatel, který se rozhodne nikdy
+notifikace neaktivovat, je v MVP rovnocenný uživatel a aplikace ho
+za to netrestá UI penalty.
+
+Tento přístup je v souladu s celkovým anti-dark-pattern designem
+notifikačního systému (sessions #18-#20).
+
+### Implementace (5 commitů)
+
+1. `feat(frontend): extract device state detection to reusable hook` —
+   `lib/use-device-state.ts`. DRY pro welcome + profile.
+2. `feat(frontend): add IosInstallGuide with inline SVG illustrations` —
+   3 Step komponenty + 3 SVG (Share, Add-to-Home, Home Screen). Žádné
+   external assets, vše inline v kódu.
+3. `refactor(frontend): use IosInstallGuide on welcome-notifications` —
+   delete inline `<ol>` bullets + inline `useEffect` detekce. Net diff:
+   −50 řádků starého kódu, +6 řádků imports + invocation.
+4. `feat(frontend): show iOS install guide in profile notification card` —
+   conditional render `IosInstallGuide` před fallback CTA. Stop-the-loop
+   pro iOS Safari uživatele, který by jinak proklikl na
+   `/welcome-notifications` jen aby viděl ten samý content.
+5. `docs: journal session 021` (this entry).
+
+### Smoke check
+
+```
+GET /welcome-notifications (auth)  → 200 (HTML render OK)
+GET /profile (auth)                → 200
+Bundle check: "Pro iPhone potřebuješ" string FOUND in
+  /_next/static/chunks/e3e6424486feba79.js
+  → IosInstallGuide chunked do production JS bez tree-shake removal
+```
+
+Vizuální ověření je na uživateli (iPhone Safari + iPhone PWA + desktop +
+Android), žádné automation tooling pro browser-side rendering v shellu.
+
+### Co se naučilo
+
+- **`<text>` v inline SVG nepřebírá Tailwind font utilities.** První
+  draft třetího illustrace měl `<text className="font-bold">M</text>`,
+  ale Tailwind utility nastavuje CSS variable, kterou SVG `<text>`
+  resolvuje jen pokud je `font` SVG attribut. Použito `fontWeight="bold"`
+  + `fontSize="6"` jako SVG attributy přímo. Stejný princip jako
+  proč `currentColor` se chápe ale `text-primary` className nikoli
+  uvnitř `<svg>` rootu.
+- **Bash `UID` je read-only proměnná v některých distribucích.** Při
+  smoke testu cleanup se mi $UID přepsalo failed assignment, scriptu
+  spadla rozumná Python invocation. Renamed na `USER_ID` v každém
+  smoke skriptu této session.
+- **Component reuse přes `<g>` wrapper s className.** SVG paths samotné
+  className neumí přímo (resp. umí, ale Tailwind je nedohledá v JIT
+  scan). Wrapping `<g className="text-primary">` is the idiomatic
+  way — `<g>` je v SVG rootu validní container element, className je
+  treated jako CSS class na DOM elementu, JIT scanner ji najde.
+
+### Status
+
+Push notifikační systém má teď i **kvalitní onboarding zážitek pro iOS
+uživatele**. SVG ilustrace jsou součástí JS bundle (žádný extra
+network request, žádný PNG/JPG asset v `/public/`). Reproducible
+artifact pro thesis — komise může otevřít kód a vidět přesně, co
+uživatel uvidí, bez nutnosti otevírat prohlížeč.
+
+Žádné backend změny v této session, žádné migrace, žádné nové deps.
+Pouze frontend polish.
