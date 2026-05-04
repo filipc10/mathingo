@@ -27,7 +27,7 @@ export function IosInstallGuide() {
         </Step>
         <Step
           number={3}
-          description="Otevři Mathingo z plochy a vrať se sem"
+          description="Otevři Mathingo z plochy a klikni na svůj profil, kde povolíš notifikace"
         >
           <HomeScreenIllustration />
         </Step>
