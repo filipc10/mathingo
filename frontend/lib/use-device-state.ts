@@ -33,10 +33,14 @@ export function useDeviceState(): DeviceState {
     const supportsPush =
       "serviceWorker" in navigator && "PushManager" in window;
 
-    if (!supportsPush) {
-      setState("unsupported");
-    } else if (isIOS && !isStandalone) {
+    // iOS check must come BEFORE the push-support check: Safari only
+    // exposes window.PushManager once the page is running as an installed
+    // PWA, so on iOS Safari outside standalone we'd otherwise mis-classify
+    // as "unsupported" and never offer the install guide.
+    if (isIOS && !isStandalone) {
       setState("ios-needs-install");
+    } else if (!supportsPush) {
+      setState("unsupported");
     } else {
       setState("supported");
     }
