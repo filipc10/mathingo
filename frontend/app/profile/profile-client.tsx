@@ -13,6 +13,7 @@ import type { CurrentUser } from "@/lib/auth";
 import { EditProfileModal } from "./edit-profile-modal";
 import { NotificationPreferencesCard } from "./notification-preferences-card";
 import { SectionBreakdown } from "./section-breakdown";
+import { SignOutButton } from "./sign-out-button";
 import { TypeStatsBlock } from "./type-stats";
 
 type Props = {
@@ -122,6 +123,10 @@ export function ProfileClient({ user, initialStats }: Props) {
           <h2 className="text-xl font-extrabold tracking-tight">Notifikace</h2>
           <NotificationPreferencesCard />
         </section>
+
+        <div className="pt-4">
+          <SignOutButton />
+        </div>
       </main>
 
       {editOpen && (
