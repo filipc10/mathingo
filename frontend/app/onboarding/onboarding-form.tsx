@@ -17,6 +17,7 @@ import {
   DEFAULT_AVATAR_PALETTE,
   DEFAULT_AVATAR_VARIANT,
 } from "@/lib/avatars";
+import { DISPLAY_NAME_HINT } from "@/lib/display-name";
 import { cn } from "@/lib/utils";
 
 import { onboardingAction } from "./actions";
@@ -108,11 +109,15 @@ export function OnboardingForm({
           onChange={(e) => setDisplayName(e.target.value)}
           minLength={3}
           maxLength={30}
+          pattern="[A-Za-z0-9_.\-]+"
           required
           autoComplete="nickname"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
         />
         <p className="text-xs font-medium text-muted-foreground">
-          3 až 30 znaků. Uvidí ji ostatní v žebříčku.
+          {DISPLAY_NAME_HINT} Uvidí ji ostatní v žebříčku.
         </p>
       </div>
 

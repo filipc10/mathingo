@@ -14,6 +14,10 @@ import {
   AvatarVariant,
 } from "@/lib/avatars";
 import type { CurrentUser } from "@/lib/auth";
+import {
+  DISPLAY_NAME_HINT,
+  validateDisplayName,
+} from "@/lib/display-name";
 import { cn } from "@/lib/utils";
 
 const PALETTE_LABELS: Record<AvatarPalette, string> = {
@@ -55,6 +59,15 @@ export function EditProfileModal({ user, onClose, onSaved }: Props) {
     setSaving(true);
     setError(null);
 
+    if (displayName !== user.display_name) {
+      const validationError = validateDisplayName(displayName);
+      if (validationError) {
+        setError(validationError);
+        setSaving(false);
+        return;
+      }
+    }
+
     const body: Record<string, unknown> = {
       avatar_variant: variant,
       avatar_palette: palette,
@@ -73,7 +86,7 @@ export function EditProfileModal({ user, onClose, onSaved }: Props) {
       if (res.status === 409) {
         setError("Tato přezdívka je už zabraná. Zkus jinou.");
       } else if (res.status === 422) {
-        setError("Přezdívka musí mít 3 až 30 znaků.");
+        setError(DISPLAY_NAME_HINT);
       } else {
         setError("Něco se nepovedlo. Zkus to znovu.");
       }
@@ -135,8 +148,15 @@ export function EditProfileModal({ user, onClose, onSaved }: Props) {
               onChange={(e) => setDisplayName(e.target.value)}
               minLength={3}
               maxLength={30}
+              pattern="[A-Za-z0-9_.\-]+"
               autoComplete="nickname"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
+            <p className="text-xs font-medium text-muted-foreground">
+              {DISPLAY_NAME_HINT}
+            </p>
             {error && (
               <p role="alert" className="text-sm font-medium text-destructive">
                 {error}

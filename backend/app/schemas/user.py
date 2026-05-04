@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.auth import DISPLAY_NAME_PATTERN
+
 
 class LessonStats(BaseModel):
     lesson_id: UUID
@@ -52,7 +54,9 @@ class UserStats(BaseModel):
 class UserUpdateRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    display_name: str | None = Field(default=None, min_length=3, max_length=30)
+    display_name: str | None = Field(
+        default=None, min_length=3, max_length=30, pattern=DISPLAY_NAME_PATTERN
+    )
     avatar_variant: (
         Literal["marble", "beam", "pixel", "sunset", "ring", "bauhaus"] | None
     ) = None

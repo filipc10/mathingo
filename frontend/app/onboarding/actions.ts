@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { apiUrl } from "@/lib/api";
 import { AVATAR_PALETTES, AVATAR_VARIANTS } from "@/lib/avatars";
+import { validateDisplayName } from "@/lib/display-name";
 
 const ALLOWED_GOALS = new Set([10, 20, 40]);
 const ALLOWED_VARIANTS = new Set<string>(AVATAR_VARIANTS);
@@ -27,8 +28,9 @@ export async function onboardingAction(
   if (firstName.length < 1 || firstName.length > 40) {
     return { error: "Zadej své jméno (1 až 40 znaků)." };
   }
-  if (displayName.length < 3 || displayName.length > 30) {
-    return { error: "Přezdívka musí mít 3 až 30 znaků." };
+  const displayNameError = validateDisplayName(displayName);
+  if (displayNameError) {
+    return { error: displayNameError };
   }
 
   const goal = Number(goalRaw);
