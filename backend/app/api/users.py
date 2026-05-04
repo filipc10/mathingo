@@ -6,6 +6,7 @@ profile-page writes (/users/me PATCH, added in a later commit) live here
 because they're feature endpoints, not auth state.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_db
 from app.dependencies import get_current_user
+from app.services.streak import effective_streak
 from app.models import (
     Course,
     DailyActivity,
@@ -97,7 +99,8 @@ async def get_my_stats(
     streak = (
         await db.execute(select(Streak).where(Streak.user_id == current_user.id))
     ).scalar_one_or_none()
-    current_streak = streak.current_length if streak else 0
+    today = datetime.now(UTC).date()
+    current_streak = effective_streak(streak, today)
     longest_streak = streak.longest_length if streak else 0
     last_active_date = streak.last_active_date if streak else None
 

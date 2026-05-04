@@ -31,6 +31,7 @@ from app.services.auth import (
     hash_token,
 )
 from app.services.email import send_magic_link
+from app.services.streak import effective_streak
 
 router = APIRouter(tags=["auth"])
 
@@ -231,7 +232,7 @@ async def me(
         daily_xp_goal=user.daily_xp_goal,
         avatar_variant=user.avatar_variant,
         avatar_palette=user.avatar_palette,
-        streak=streak.current_length if streak else 0,
+        streak=effective_streak(streak, today),
         xp_today=xp_today,
         last_activity_date=streak.last_active_date if streak else None,
     )

@@ -18,6 +18,7 @@ from app.db import get_db
 from app.dependencies import get_current_user
 from app.models import DailyActivity, Streak, User
 from app.schemas.leaderboard import LeaderboardEntry, LeaderboardResponse
+from app.services.streak import effective_streak_sql
 
 router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
 
@@ -49,12 +50,15 @@ async def _build_leaderboard(
         xp_subq = xp_subq.where(DailyActivity.activity_date >= since)
     xp_subq = xp_subq.group_by(DailyActivity.user_id).subquery()
 
+    today = datetime.now(UTC).date()
+    streak_expr = effective_streak_sql(today).label("streak")
+
     stmt = (
         select(
             User.id,
             User.display_name,
             xp_subq.c.xp,
-            Streak.current_length,
+            streak_expr,
         )
         .join(xp_subq, xp_subq.c.user_id == User.id)
         .outerjoin(Streak, Streak.user_id == User.id)
@@ -62,7 +66,7 @@ async def _build_leaderboard(
         .where(xp_subq.c.xp > 0)
         .order_by(
             desc(xp_subq.c.xp),
-            desc(func.coalesce(Streak.current_length, 0)),
+            desc(streak_expr),
             User.created_at.asc(),
         )
     )
@@ -83,7 +87,7 @@ async def _build_leaderboard(
                 user_id=row.id,
                 display_name=row.display_name,
                 xp=int(row.xp),
-                streak=row.current_length or 0,
+                streak=int(row.streak or 0),
                 is_current_user=is_me,
             )
         )
