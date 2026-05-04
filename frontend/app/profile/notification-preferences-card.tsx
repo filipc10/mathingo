@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { Bell, BellOff } from "lucide-react";
 import Link from "next/link";
 
+import { IosInstallGuide } from "@/components/notifications/ios-install-guide";
 import {
   SlotPicker,
   type SlotValue,
 } from "@/components/notifications/slot-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Toggle } from "@/components/ui/toggle";
+import { useDeviceState } from "@/lib/use-device-state";
 import { cn } from "@/lib/utils";
 
 type Prefs = {
@@ -21,6 +23,7 @@ type Prefs = {
 export function NotificationPreferencesCard() {
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [saving, setSaving] = useState(false);
+  const deviceState = useDeviceState();
 
   useEffect(() => {
     void fetchPrefs();
@@ -75,6 +78,33 @@ export function NotificationPreferencesCard() {
   // user subscribes, so we show a CTA back to /welcome-notifications
   // rather than a fake "enabled" toggle that wouldn't deliver anything.
   if (!prefs.has_push_subscription) {
+    // iOS Safari outside PWA mode can't subscribe at all — sending the
+    // user to /welcome-notifications would just bounce them off another
+    // "iPhone needs install" screen. Show the visual guide here so they
+    // know what to do without an extra navigation hop.
+    if (deviceState === "ios-needs-install") {
+      return (
+        <Card>
+          <CardContent className="space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-full bg-muted">
+                <BellOff className="size-5 text-muted-foreground" />
+              </div>
+              <div className="flex-1">
+                <div className="font-bold">Notifikace na iPhone</div>
+                <p className="text-sm text-muted-foreground">
+                  Pro denní připomenutí na iPhone potřebujeme Mathingo
+                  přidat na plochu. Po instalaci se sem vrať a notifikace
+                  povol z plochy.
+                </p>
+              </div>
+            </div>
+            <IosInstallGuide />
+          </CardContent>
+        </Card>
+      );
+    }
+
     return (
       <Card>
         <CardContent className="space-y-4">
