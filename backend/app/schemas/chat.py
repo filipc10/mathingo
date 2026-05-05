@@ -1,12 +1,25 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StrictFloat, StrictInt
+from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=4000)
+
+
+# Mirrors AnswerSubmission.answer in app/schemas/content.py — the chat
+# endpoint accepts whatever shape the user submitted to /check or /submit.
+# StrictBool is listed first so a bool isn't silently coerced to int.
+ChatAnswerValue = (
+    StrictBool
+    | StrictInt
+    | StrictFloat
+    | str
+    | dict[StrictStr, StrictStr]
+    | list[StrictStr]
+)
 
 
 class ExplainRequest(BaseModel):
@@ -18,7 +31,7 @@ class ExplainRequest(BaseModel):
     `chat_session_message_limit`.
     """
 
-    user_answer: StrictInt | StrictFloat | str
+    user_answer: ChatAnswerValue
     messages: list[ChatMessage] = Field(min_length=1)
 
 
@@ -38,5 +51,5 @@ class ExerciseContextSummary(BaseModel):
     id: UUID
     prompt: str
     exercise_type: str
-    correct_answer: int | float | str
-    user_answer: int | float | str
+    correct_answer: bool | int | float | str | dict[str, str] | list[str]
+    user_answer: bool | int | float | str | dict[str, str] | list[str]

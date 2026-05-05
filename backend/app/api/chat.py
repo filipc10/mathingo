@@ -64,15 +64,36 @@ def _format_answer(
 ) -> str:
     """Render an answer in a form the LLM can reason about.
 
-    For multiple_choice the wire format is an integer index into
-    `payload["options"]`; passing the raw int leaves the model guessing
-    what the option says. Resolve it to the option text (with the index
-    in parentheses for traceability). Other types pass through.
+    The wire format for each type is terse — just an index, a bool, or
+    a list of step ids. Without resolving these to the underlying text,
+    the model would have nothing concrete to reason about.
     """
     if exercise.exercise_type == "multiple_choice" and isinstance(value, int):
         options = exercise.payload.get("options") or []
         if 0 <= value < len(options):
             return f"{options[value]!r} (index {value})"
+
+    if exercise.exercise_type == "true_false" and isinstance(value, bool):
+        return "Pravda" if value else "Nepravda"
+
+    if exercise.exercise_type == "matching" and isinstance(value, dict):
+        if not value:
+            return "(žádné přiřazení)"
+        lines = [f"  - {item} → {cat}" for item, cat in value.items()]
+        return "\n" + "\n".join(lines)
+
+    if exercise.exercise_type == "step_ordering" and isinstance(value, list):
+        steps_by_id = {
+            s["id"]: s["text"]
+            for s in (exercise.payload.get("steps") or [])
+            if isinstance(s, dict)
+        }
+        lines = [
+            f"  {i + 1}. {steps_by_id.get(sid, sid)}"
+            for i, sid in enumerate(value)
+        ]
+        return "\n" + "\n".join(lines) if lines else "(žádné pořadí)"
+
     return str(value)
 
 
@@ -92,6 +113,25 @@ def _exercise_context_text(
             f"  {i}. {opt}" for i, opt in enumerate(options)
         )
         parts.append(f"Nabízené možnosti:\n{rendered_options}")
+    elif exercise.exercise_type == "matching":
+        items = exercise.payload.get("items") or []
+        categories = exercise.payload.get("categories") or []
+        parts.append(
+            "Položky k přiřazení:\n"
+            + "\n".join(f"  - {item}" for item in items)
+            + "\n\nKategorie:\n"
+            + "\n".join(f"  - {cat}" for cat in categories)
+        )
+    elif exercise.exercise_type == "step_ordering":
+        steps = exercise.payload.get("steps") or []
+        parts.append(
+            "Kroky (v zamíchaném pořadí — student je řadí):\n"
+            + "\n".join(
+                f"  - {s['id']}: {s['text']}"
+                for s in steps
+                if isinstance(s, dict)
+            )
+        )
     parts.append(
         f"Moje odpověď: {_format_answer(exercise, user_answer)}\n"
         f"Správná odpověď: {_format_answer(exercise, correct_answer)}"
