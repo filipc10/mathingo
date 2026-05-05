@@ -28,6 +28,7 @@ class ExerciseType(StrEnum):
     TRUE_FALSE = "true_false"
     MATCHING = "matching"
     STEP_ORDERING = "step_ordering"
+    CLOZE = "cloze"
 
 
 class Course(IDMixin, TimestampMixin, Base):
