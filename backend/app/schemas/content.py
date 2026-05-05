@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr
 
 
 class CourseResponse(BaseModel):
@@ -73,23 +73,36 @@ class AnswerSubmission(BaseModel):
     # answer accepts the union of types the supported exercise types use:
     #   multiple_choice → int (option index)
     #   numeric         → int | float
-    # StrictInt / StrictFloat (vs. plain int / float) reject booleans at
-    # parse time — Python's bool is a subclass of int, so a lax Union would
-    # silently coerce true→1 and let it sail past a runtime isinstance check
-    # in the evaluator. With Strict the user gets a Pydantic 422 instead.
-    # `str` is kept for future exercise types (matching, step_ordering).
-    answer: StrictInt | StrictFloat | str
+    #   true_false      → bool
+    #   cloze           → str
+    #   matching        → dict[str, str]    (item → category)
+    #   step_ordering   → list[str]         (step ids in order)
+    # StrictBool is listed first — Python's bool is a subclass of int, so a
+    # lax Union would coerce true→1 and let it sail past the evaluator's
+    # isinstance checks. StrictBool / StrictInt / StrictFloat reject the
+    # cross-type at parse time and return 422.
+    answer: (
+        StrictBool
+        | StrictInt
+        | StrictFloat
+        | str
+        | dict[StrictStr, StrictStr]
+        | list[StrictStr]
+    )
 
 
 class SubmissionRequest(BaseModel):
     answers: list[AnswerSubmission]
 
 
+AnswerValue = bool | int | float | str | dict[str, str] | list[str]
+
+
 class ExerciseResult(BaseModel):
     exercise_id: UUID
     correct: bool
-    user_answer: int | float | str
-    correct_answer: int | float | str
+    user_answer: AnswerValue
+    correct_answer: AnswerValue
     explanation: str | None
 
 
@@ -122,14 +135,21 @@ class CourseProgressResponse(BaseModel):
 
 
 class ExerciseCheckRequest(BaseModel):
-    answer: StrictInt | StrictFloat | str
+    answer: (
+        StrictBool
+        | StrictInt
+        | StrictFloat
+        | str
+        | dict[StrictStr, StrictStr]
+        | list[StrictStr]
+    )
 
 
 class ExerciseCheckResponse(BaseModel):
     exercise_id: UUID
     correct: bool
-    user_answer: int | float | str
-    correct_answer: int | float | str
+    user_answer: AnswerValue
+    correct_answer: AnswerValue
     explanation: str | None
 
 
