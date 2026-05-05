@@ -4,16 +4,30 @@ import { cookies } from "next/headers";
 
 import { apiUrl } from "@/lib/api";
 
+// Discriminated by exercise type at the call site:
+//   multiple_choice → number       (option index)
+//   numeric         → number
+//   true_false      → boolean
+//   cloze           → string
+//   matching        → Record<string, string>
+//   step_ordering   → string[]
+export type AnswerValue =
+  | number
+  | string
+  | boolean
+  | Record<string, string>
+  | string[];
+
 export type AnswerSubmission = {
   exercise_id: string;
-  answer: number | string;
+  answer: AnswerValue;
 };
 
 export type ExerciseResult = {
   exercise_id: string;
   correct: boolean;
-  user_answer: number | string;
-  correct_answer: number | string;
+  user_answer: AnswerValue;
+  correct_answer: AnswerValue;
   explanation: string | null;
 };
 
@@ -36,14 +50,14 @@ export type SubmissionResponse = {
 export type ExerciseCheckResult = {
   exercise_id: string;
   correct: boolean;
-  user_answer: number | string;
-  correct_answer: number | string;
+  user_answer: AnswerValue;
+  correct_answer: AnswerValue;
   explanation: string | null;
 };
 
 export async function checkExerciseAnswer(
   exerciseId: string,
-  answer: number | string,
+  answer: AnswerValue,
 ): Promise<
   { ok: true; data: ExerciseCheckResult } | { ok: false; error: string }
 > {

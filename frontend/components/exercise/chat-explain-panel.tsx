@@ -6,6 +6,7 @@ import { Loader2, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiUrl } from "@/lib/api";
+import type { AnswerValue } from "@/app/lesson/[id]/actions";
 
 import { KaTeXRenderer } from "./katex-renderer";
 
@@ -23,7 +24,7 @@ export function ChatExplainPanel({
   userAnswer,
 }: {
   exerciseId: string;
-  userAnswer: number | string;
+  userAnswer: AnswerValue;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");

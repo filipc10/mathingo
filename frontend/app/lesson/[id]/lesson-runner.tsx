@@ -7,30 +7,49 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ChatExplainPanel } from "@/components/exercise/chat-explain-panel";
+import { ClozeExercise, type ClozePayload } from "@/components/exercise/cloze-exercise";
 import {
   ExerciseFeedback,
   type ExerciseFeedbackData,
 } from "@/components/exercise/exercise-feedback";
 import { LessonSummary } from "@/components/exercise/lesson-summary";
 import {
+  MatchingExercise,
+  type MatchingPayload,
+} from "@/components/exercise/matching-exercise";
+import {
   MultipleChoiceExercise,
   type MultipleChoicePayload,
 } from "@/components/exercise/multiple-choice-exercise";
 import { NumericExercise } from "@/components/exercise/numeric-exercise";
+import {
+  StepOrderingExercise,
+  type StepOrderingPayload,
+} from "@/components/exercise/step-ordering-exercise";
+import { TrueFalseExercise } from "@/components/exercise/true-false-exercise";
 
 import {
   type AnswerSubmission,
+  type AnswerValue,
   type SubmissionResponse,
   checkExerciseAnswer,
   submitLessonAnswers,
 } from "./actions";
 
+type ExerciseType =
+  | "multiple_choice"
+  | "numeric"
+  | "true_false"
+  | "cloze"
+  | "matching"
+  | "step_ordering";
+
 type Exercise = {
   id: string;
   order_index: number;
-  exercise_type: "multiple_choice" | "numeric";
+  exercise_type: ExerciseType;
   prompt: string;
-  payload: MultipleChoicePayload | Record<string, unknown>;
+  payload: Record<string, unknown>;
 };
 
 export type LessonData = {
@@ -46,22 +65,48 @@ type Phase =
   | { kind: "feedback"; data: ExerciseFeedbackData; askingAi: boolean }
   | { kind: "summary"; submission: SubmissionResponse };
 
+function hasCompleteAnswer(exercise: Exercise, answer: AnswerValue | undefined): boolean {
+  if (answer === undefined || answer === null) return false;
+  switch (exercise.exercise_type) {
+    case "multiple_choice":
+      return typeof answer === "number";
+    case "numeric":
+      return typeof answer === "number";
+    case "true_false":
+      return typeof answer === "boolean";
+    case "cloze":
+      return typeof answer === "string" && answer.trim().length > 0;
+    case "matching": {
+      if (
+        typeof answer !== "object" ||
+        Array.isArray(answer) ||
+        typeof answer === "boolean"
+      ) {
+        return false;
+      }
+      const items = (exercise.payload as MatchingPayload).items ?? [];
+      return Object.keys(answer).length === items.length;
+    }
+    case "step_ordering":
+      return Array.isArray(answer) && answer.length > 0;
+  }
+}
+
 export function LessonRunner({ lesson }: { lesson: LessonData }) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, number | string>>({});
+  const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [phase, setPhase] = useState<Phase>({ kind: "answering" });
   const [submitting, startSubmit] = useTransition();
 
   const total = lesson.exercises.length;
   const currentExercise = lesson.exercises[currentIndex];
-  const currentAnswer = currentExercise
-    ? answers[currentExercise.id]
-    : undefined;
-  const hasAnswer =
-    currentAnswer !== undefined && currentAnswer !== null && currentAnswer !== "";
+  const currentAnswer = currentExercise ? answers[currentExercise.id] : undefined;
+  const hasAnswer = currentExercise
+    ? hasCompleteAnswer(currentExercise, currentAnswer)
+    : false;
   const isLast = currentIndex === total - 1;
 
-  function handleAnswer(value: number | string) {
+  function handleAnswer(value: AnswerValue) {
     if (!currentExercise) return;
     setAnswers((prev) => ({ ...prev, [currentExercise.id]: value }));
   }
@@ -71,7 +116,7 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
     setPhase({ kind: "checking" });
     const outcome = await checkExerciseAnswer(
       currentExercise.id,
-      currentAnswer as number | string,
+      currentAnswer as AnswerValue,
     );
     if (!outcome.ok) {
       toast.error(outcome.error);
@@ -98,7 +143,7 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
     }
     const payload: AnswerSubmission[] = lesson.exercises.map((ex) => ({
       exercise_id: ex.id,
-      answer: answers[ex.id] as number | string,
+      answer: answers[ex.id] as AnswerValue,
     }));
     startSubmit(async () => {
       const outcome = await submitLessonAnswers(lesson.id, payload);
@@ -121,12 +166,6 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
 
   const exercisePhase: "answering" | "feedback" =
     phase.kind === "feedback" ? "feedback" : "answering";
-  const correctIndex =
-    phase.kind === "feedback" &&
-    currentExercise?.exercise_type === "multiple_choice" &&
-    typeof phase.data.correct_answer === "number"
-      ? phase.data.correct_answer
-      : undefined;
 
   // Sticky bottom button label and disabled state depend on phase.
   const buttonLabel = (() => {
@@ -140,6 +179,9 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
     (phase.kind === "answering" && !hasAnswer);
   const buttonAction = phase.kind === "feedback" ? handleContinue : handleCheck;
   const buttonBusy = phase.kind === "checking" || submitting;
+
+  const correctAnswer =
+    phase.kind === "feedback" ? phase.data.correct_answer : undefined;
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -169,17 +211,73 @@ export function LessonRunner({ lesson }: { lesson: LessonData }) {
               }
               onSelect={handleAnswer}
               phase={exercisePhase}
-              correctIndex={correctIndex}
+              correctIndex={
+                typeof correctAnswer === "number" ? correctAnswer : undefined
+              }
             />
           )}
           {currentExercise?.exercise_type === "numeric" && (
             <NumericExercise
               prompt={currentExercise.prompt}
-              value={
-                typeof currentAnswer === "number" ? currentAnswer : null
-              }
+              value={typeof currentAnswer === "number" ? currentAnswer : null}
               onChange={(v) => handleAnswer(v ?? "")}
               phase={exercisePhase}
+            />
+          )}
+          {currentExercise?.exercise_type === "cloze" && (
+            <ClozeExercise
+              prompt={currentExercise.prompt}
+              payload={currentExercise.payload as ClozePayload}
+              value={typeof currentAnswer === "string" ? currentAnswer : ""}
+              onChange={handleAnswer}
+              phase={exercisePhase}
+            />
+          )}
+          {currentExercise?.exercise_type === "true_false" && (
+            <TrueFalseExercise
+              prompt={currentExercise.prompt}
+              value={typeof currentAnswer === "boolean" ? currentAnswer : null}
+              onSelect={handleAnswer}
+              phase={exercisePhase}
+              correctValue={
+                typeof correctAnswer === "boolean" ? correctAnswer : undefined
+              }
+            />
+          )}
+          {currentExercise?.exercise_type === "matching" && (
+            <MatchingExercise
+              prompt={currentExercise.prompt}
+              payload={currentExercise.payload as MatchingPayload}
+              value={
+                currentAnswer &&
+                typeof currentAnswer === "object" &&
+                !Array.isArray(currentAnswer) &&
+                typeof currentAnswer !== "boolean"
+                  ? (currentAnswer as Record<string, string>)
+                  : {}
+              }
+              onChange={handleAnswer}
+              phase={exercisePhase}
+              correctAnswer={
+                correctAnswer &&
+                typeof correctAnswer === "object" &&
+                !Array.isArray(correctAnswer)
+                  ? (correctAnswer as Record<string, string>)
+                  : undefined
+              }
+            />
+          )}
+          {currentExercise?.exercise_type === "step_ordering" && (
+            <StepOrderingExercise
+              prompt={currentExercise.prompt}
+              payload={currentExercise.payload as StepOrderingPayload}
+              exerciseId={currentExercise.id}
+              value={Array.isArray(currentAnswer) ? currentAnswer : null}
+              onChange={handleAnswer}
+              phase={exercisePhase}
+              correctOrder={
+                Array.isArray(correctAnswer) ? correctAnswer : undefined
+              }
             />
           )}
 

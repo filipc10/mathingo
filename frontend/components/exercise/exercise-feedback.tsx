@@ -7,10 +7,12 @@ import { cn } from "@/lib/utils";
 
 import { KaTeXRenderer } from "./katex-renderer";
 
+import type { AnswerValue } from "@/app/lesson/[id]/actions";
+
 export type ExerciseFeedbackData = {
   correct: boolean;
-  user_answer: number | string;
-  correct_answer: number | string;
+  user_answer: AnswerValue;
+  correct_answer: AnswerValue;
   explanation: string | null;
 };
 
