@@ -43,14 +43,30 @@ def sanitize_exercise_payload(
 ) -> dict[str, Any]:
     """Strip answer-revealing fields before exposing an exercise to the client.
 
-    Multiple-choice answers (correct_index) and numeric answers (expected,
-    tolerance) are evaluated server-side at submit time; the client only
-    receives what's needed to render the question.
+    Each exercise type stores both its render data and its correct answer
+    in the same JSONB column; everything that would leak the answer is
+    removed here before the payload reaches the wire.
     """
     if exercise_type == "multiple_choice":
         return {"options": payload.get("options", [])}
     if exercise_type == "numeric":
         return {}
+    if exercise_type == "cloze":
+        return {"placeholder": payload.get("placeholder")}
+    if exercise_type == "true_false":
+        return {}
+    if exercise_type == "matching":
+        return {
+            k: payload[k]
+            for k in ("items", "categories", "instructions")
+            if k in payload
+        }
+    if exercise_type == "step_ordering":
+        return {
+            k: payload[k]
+            for k in ("steps", "instructions")
+            if k in payload
+        }
     return payload
 
 
@@ -198,6 +214,52 @@ def _evaluate(exercise: Exercise, user_answer: Any) -> tuple[bool, Any]:
         expected = exercise.payload["expected"]
         tolerance = exercise.payload.get("tolerance", 0.001)
         return abs(user_answer - expected) <= tolerance, expected
+
+    if exercise.exercise_type == "cloze":
+        if not isinstance(user_answer, str):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"answer_for_exercise_{exercise.id}_must_be_string",
+            )
+        expected = exercise.payload["value"]
+        alternates = exercise.payload.get("alternates", [])
+        case_sensitive = exercise.payload.get("case_sensitive", False)
+        trim = exercise.payload.get("trim_whitespace", True)
+        candidate = user_answer.strip() if trim else user_answer
+        accepted = [expected, *alternates]
+        if not case_sensitive:
+            candidate = candidate.lower()
+            accepted = [a.lower() for a in accepted]
+        return candidate in accepted and candidate != "", expected
+
+    if exercise.exercise_type == "true_false":
+        # Strict bool — Python's bool is an int subclass, so without the
+        # type check first an int 0/1 would silently match.
+        if not isinstance(user_answer, bool):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"answer_for_exercise_{exercise.id}_must_be_boolean",
+            )
+        expected = exercise.payload["value"]
+        return user_answer == expected, expected
+
+    if exercise.exercise_type == "matching":
+        if not isinstance(user_answer, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"answer_for_exercise_{exercise.id}_must_be_object",
+            )
+        expected = exercise.payload["assignments"]
+        return user_answer == expected, expected
+
+    if exercise.exercise_type == "step_ordering":
+        if not isinstance(user_answer, list):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"answer_for_exercise_{exercise.id}_must_be_array",
+            )
+        expected = exercise.payload["order"]
+        return user_answer == expected, expected
 
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
