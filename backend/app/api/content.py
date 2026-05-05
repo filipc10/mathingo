@@ -299,7 +299,7 @@ async def check_exercise_answer(
     )
 
 
-COMPLETION_THRESHOLD = 0.8
+COMPLETION_THRESHOLD = 0.66
 
 
 async def _persist_attempt_and_progress(

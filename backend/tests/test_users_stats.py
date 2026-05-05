@@ -80,7 +80,7 @@ async def test_stats_happy_path_after_submit(client, test_user, db_session):
         pytest.skip("4MM101 course not seeded in dev DB")
 
     # Build correct answers for every exercise in the lesson — this way
-    # we get a guaranteed completion (≥80%), 100% winrate, and per-type
+    # we get a guaranteed completion (≥66%), 100% winrate, and per-type
     # rows in the response.
     payload_answers: list[dict[str, Any]] = []
     for ex in sorted(lesson.exercises, key=lambda e: e.order_index):

@@ -21,7 +21,7 @@ export function LessonSummary({
     if (progress.is_completed) {
       return "Lekci jsi zvládl/a! Bez XP — už jsi ji dokončil/a dříve.";
     }
-    return "Pro získání XP potřebuješ aspoň 80 % správně.";
+    return "Pro získání XP potřebuješ aspoň 66 % správně.";
   })();
 
   const xpClassName = cn(

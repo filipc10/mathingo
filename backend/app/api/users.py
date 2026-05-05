@@ -113,7 +113,7 @@ async def get_my_stats(
         )
     ).scalar_one() or 0
 
-    # 3. Distinct lessons ever completed (≥80% threshold, persisted)
+    # 3. Distinct lessons ever completed (≥66% threshold, persisted)
     lessons_completed = (
         await db.execute(
             select(func.count(func.distinct(LessonAttempt.lesson_id))).where(

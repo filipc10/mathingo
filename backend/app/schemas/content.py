@@ -120,7 +120,7 @@ class SubmissionResponse(BaseModel):
 
 
 class ProgressInfo(BaseModel):
-    is_completed: bool       # this attempt scored ≥ 80%
+    is_completed: bool       # this attempt scored ≥ 66%
     xp_earned: int           # awarded only on first completion
     user_streak: int         # current_length after this submit
     user_xp_today: int       # today's accumulated XP after this submit

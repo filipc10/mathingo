@@ -75,7 +75,7 @@ class LessonAttempt(IDMixin, Base):
     __tablename__ = "lesson_attempts"
     __table_args__ = (
         # Partial UNIQUE: at most one completed attempt per (user, lesson),
-        # so XP is awarded exactly once. Subsequent ≥80% attempts get
+        # so XP is awarded exactly once. Subsequent ≥66% attempts get
         # is_completed=False and earn no XP — the application enforces this,
         # the index is defence-in-depth.
         Index(
