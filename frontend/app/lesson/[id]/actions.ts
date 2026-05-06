@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 
 import { apiUrl } from "@/lib/api";
 
@@ -110,5 +111,13 @@ export async function submitLessonAnswers(
   }
 
   const data = (await res.json()) as SubmissionResponse;
+
+  // Invalidate cached pages whose content depends on lesson progress
+  // (path completion, XP totals, streak). Without this the user can
+  // submit a lesson and still see the pre-submit state on /learn.
+  revalidatePath("/learn");
+  revalidatePath("/profile");
+  revalidatePath("/leaderboard");
+
   return { ok: true, data };
 }
